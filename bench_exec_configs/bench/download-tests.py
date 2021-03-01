@@ -2,6 +2,8 @@ import requests
 import os
 import tarfile
 import glob
+import shutil
+import itertools
 
 TESTS_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tests/')
 
@@ -16,6 +18,14 @@ TESTS_ARCHIVES = [
   'https://www.cs.ubc.ca/~hoos/SATLIB/Benchmarks/SAT/RND3SAT/uuf200-860.tar.gz'
 ]
 
+# Function from: https://stackoverflow.com/questions/17547273/flatten-complex-directory-structure-in-python
+def flatten(destination):
+    all_files = []
+    for root, _dirs, files in itertools.islice(os.walk(destination), 1, None):
+        for filename in files:
+            all_files.append(os.path.join(root, filename))
+    for filename in all_files:
+        shutil.move(filename, destination)
 
 def download_test_archive(url):
     print (url)
@@ -35,6 +45,7 @@ def download_test_archive(url):
         tar = tarfile.open(archive_path, "r:gz")
         tar.extractall(path=dir_path)
         tar.close()
+        flatten(dir_path)
 
         os.remove(archive_path)
 
@@ -45,7 +56,6 @@ def download_test_archives():
 
     for test_archive in TESTS_ARCHIVES:
         download_test_archive(test_archive)
-
 
 def index_tests():
     return sorted(glob.glob(os.path.join(TESTS_FOLDER, "**/*.cnf"), recursive=True))

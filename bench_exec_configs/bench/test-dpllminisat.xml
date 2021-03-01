@@ -11,31 +11,31 @@
   </rundefinition>
 
   <tasks name="uf100-430">
-    <include>benchmarks/uf100-430/*.cnf</include>
+    <include>tests/uf100-430/*.cnf</include>
   </tasks>
 
   <tasks name="uuf100-430">
-    <include>benchmarks/uuf100-430/*.cnf</include>
+    <include>tests/uuf100-430/*.cnf</include>
   </tasks>
 
   <tasks name="uf150-645">
-    <include>benchmarks/uf150-645/*.cnf</include>
+    <include>tests/uf150-645/*.cnf</include>
   </tasks>
 
   <tasks name="uuf150-645">
-    <include>benchmarks/uuf150-645/*.cnf</include>
+    <include>tests/uuf150-645/*.cnf</include>
   </tasks>
 
   <tasks name="uf175-753">
-    <include>benchmarks/uf175-753/*.cnf</include>
+    <include>tests/uf175-753/*.cnf</include>
   </tasks>
 
   <tasks name="uuf175-753">
-    <include>benchmarks/uuf175-753/*.cnf</include>
+    <include>tests/uuf175-753/*.cnf</include>
   </tasks>
 
   <tasks name="uf200-860">
-    <include>benchmarks/uf200-860/*.cnf</include>
+    <include>tests/uf200-860/*.cnf</include>
   </tasks>
 
   <tasks name="uuf200-860">
