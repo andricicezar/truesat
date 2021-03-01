@@ -14,11 +14,10 @@
 - [ ] Euristica pe care o folosim, ar selecta prima data unit clauses
 - [ ] SC De inteles phase saving in contextul in care DPLL trebuie sa faca revertLastDecisionLevel
 - [ ] SC De inteles de ce o alta euristica de decizie este incompatibila cu revertLastDecisionLevel
-- [ ] SC De explicat
-- [ ] revertLastDecisionLevel nu ar merge cu watched literals
-- [ ] defapt noi facem undo pt ca nu avem watched literals
+- [ ] SC De explicat revertLastDecisionLevel nu ar merge cu watched literals 
+         defapt noi facem undo pt ca nu avem watched literals
 - [ ] CA De verificat ce se intampla cu '%' de la final in codul nostru si minisat
-- [ ] CA De adaugat o exceptie in C++ daca se depasesc limitele de 16 si 
+- [x] CA De adaugat o exceptie in C++ daca se depasesc limitele de 16 si 
 - [ ] De instalat si testat IsaSAT
 - [ ] CA De vezut ce e cu kissat
 - [ ] CA De adaugat la benchmark o versiune cu mathematical integers si de vazut de cate ori mai incet

@@ -251,7 +251,6 @@ int main(int argc, char **argv)
       
     int variablesCount = 0;
     int clausesCount = 0;
-    int **clauses = new int*[7000];
 
     clock_t t_start_parse = clock();
     cout << "Parsing SAT problem" << endl;
@@ -259,6 +258,8 @@ int main(int argc, char **argv)
       cout << "Error reading problem header\n" << endl;
       return -1;
     }
+
+    int **clauses = new int*[clausesCount];
 
     for (int i = 0; i < clausesCount; ++i) {
       int k;
