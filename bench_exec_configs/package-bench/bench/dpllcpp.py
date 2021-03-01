@@ -2,11 +2,15 @@ import benchexec.tools.template
 import benchexec.result as result
 import benchexec.util as util
 import re
+import os
 
 
 class Tool(benchexec.tools.template.BaseTool):
     def executable(self):
-        return "/home/cezar/work/fii/jlamp-2020-si-submission/impl/dpllcpp" 
+        if "TRUESAT_BENCHEXEC" in os.environ:
+            return os.environ.get("TRUESAT_BENCHEXEC") + "/cpp_solver/dpllcpp" 
+        else:
+            raise NameError('Please set TRUESAT_BENCHEXEC to the root folder of the TrueSAT repo')
 
     def name(self):
         return "DPLL in CPP"

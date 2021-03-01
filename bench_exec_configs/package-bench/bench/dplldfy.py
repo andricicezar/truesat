@@ -12,10 +12,13 @@ class Tool(benchexec.tools.template.BaseTool):
         return "DPLL in Dafny"
 
     def cmdline(self, executable, options, tasks, propertyfile, rlimits):
-        return (
-            [executable, "/home/cezar/work/fii/jlamp-2020-si-submission/impl/main.exe"]
-            + options
-            + tasks
+        if "TRUESAT_BENCHEXEC" in os.environ:
+            return (
+                [executable, os.environ.get("TRUESAT_BENCHEXEC") + "/dafny_solver/main.exe"]
+                + options
+                + tasks
+        else:
+            raise NameError('Please set TRUESAT_BENCHEXEC to the root folder of the TrueSAT repo')
         )
 
     def get_value_from_output(self, lines, identifier):
