@@ -1,0 +1,12 @@
+*.exe*
+*.dll
+*.dot
+*.mdb
+.vscode
+*.log
+*.smt2
+!csharp-equivalet/.vscode
+main.cs
+tests
+dpllcpp
+*.swp

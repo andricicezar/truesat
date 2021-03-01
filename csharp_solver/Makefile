@@ -1,0 +1,2 @@
+build:
+	csc dpll.cs
