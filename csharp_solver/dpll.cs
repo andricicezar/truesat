@@ -238,6 +238,7 @@ namespace satsolver
         static int Main(string[] args) 
         {
             Console.WriteLine("Starting...");
+            Console.WriteLine("Notice! There is a hard-coded 7000 limit for the clauses count. Please increase this number for larger test cases.");
 
             if (args.Length == 0) {
                 System.Console.WriteLine("Please enter a path.");
