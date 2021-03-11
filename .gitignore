@@ -10,3 +10,4 @@ main.cs
 tests
 dpllcpp
 *.swp
+truesat_bigints

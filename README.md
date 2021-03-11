@@ -13,13 +13,13 @@ how to build the binaries. Just run the `make` command.
 
 ### Download tests
 You can download test files from this [website](https://www.cs.ubc.ca/~hoos/SATLIB/benchm.html)
-or use our script `bench_exec_configs/bench/download-tests.py`.
+or use our script `bench/download-tests.py`.
 
 ### Running
 Any of the 3 solvers accept only one argument, which is the path
 to the test.
 ```
-./main.exe benchmarks/hole6.cnf
+./main.exe bench/tests/...
 ```
 
 ### Benchmarks
@@ -30,17 +30,15 @@ Please check the [documentation of `bench-exec`](https://github.com/sosy-lab/ben
 to see how to install it.
 
 #### Prepare
-1. Set `TRUESAT_BENCHEXEC` to the root of the TrueSAT project. You can run `export 
-TRUESAT_BENCHEXEC=$(pwd)` in this folder.
-2. Go into the `bench_exec_configs/package_bench` and run the command:
+1. Compile any of the solvers you would like to bench.
+2. Go into the `bench/truesat-bench` and run the command:
 `python3 -m pip install . --upgrade`.
-3. Go into `bench_exec_configs/bench` and run `python3 download-tests.py`.
-4. The solvers must be compiled to be able to run the benchmarks, therefore make sure
-you built the solvers.
+3. In the `bench` folder run `python3 download-tests.py`.
 
 #### Running tests
-You can run the benchmarks for the dafny solver by running the command
- `benchexec test-dpllsolver.py` in the folder `bench_exec_configs/bench`.
+You can run the benchmarks for the dafny solver by using the make command.
+Please open it, and fix the paths to the solvers. After that, you can run
+`make bench_truesat`.
 
 ### Contributors
 * Cezar C. Andrici, Alexandru Ioan Cuza University of Iasi, Romania

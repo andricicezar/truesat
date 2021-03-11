@@ -1,0 +1,14 @@
+bench_truesat:
+	benchexec truesat.xml --tool-directory ../../truesat/truesat_src  
+
+bench_truesat_bigints:
+	benchexec truesat-bigints.xml --tool-directory ../../truesat/truesat_bigints
+
+bench_isasat:
+	benchexec isasat.xml --tool-directory ../../isafol-clone
+
+bench_kissat:
+	benchexec kissat.xml --tool-directory ../../kissat
+
+bench_minisat:
+	benchexec minisat.xml --tool-directory ../../minisat
