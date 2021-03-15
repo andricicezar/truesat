@@ -3,30 +3,26 @@ import benchexec.result as result
 import benchexec.util as util
 import re
 
-
-class Tool(benchexec.tools.template.BaseTool):
-    def executable(self):
+class Tool(benchexec.tools.template.BaseTool2):
+    def executable(self, tool_locator):
+        self.tool_locator2 = tool_locator
         return util.find_executable("mono")
 
     def name(self):
         return "DPLL in C#"
 
-    def cmdline(self, executable, options, tasks, propertyfile, rlimits):
-        if "TRUESAT_BENCHEXEC" in os.environ:
-            return (
-                [executable, os.environ.get("TRUESAT_BENCHEXEC") + "/csharp_solver/dpll.exe"]
-                + options
-                + tasks
-        else:
-            raise NameError('Please set TRUESAT_BENCHEXEC to the root folder of the TrueSAT repo')
-        )
+    def cmdline(self, executable, options, task, rlimits):
+        return [executable, self.tool_locator2.find_executable("dpll.exe")] + options + [task.single_input_file]
 
-    def get_value_from_output(self, lines, identifier):
-        for line in reversed(lines):
-            pattern = identifier
-            if pattern[-1] != ":":
-                pattern += ":"
-            match = re.match("^" + pattern + "(.*)", line)
-            if match and match.group(1):
-                return match.group(1).strip()
-        return None
+    def determine_result(self, run):
+        status = None
+
+        for line in run.output:
+            if "s SATISFIABLE" in line:
+                status = result.RESULT_TRUE_PROP
+            elif "s UNSATISFIABLE" in line:
+                status = result.RESULT_FALSE_PROP
+
+        if not status:
+            status = result.RESULT_ERROR
+        return status

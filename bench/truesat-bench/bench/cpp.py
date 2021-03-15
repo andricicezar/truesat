@@ -5,29 +5,25 @@ import re
 import os
 
 
-class Tool(benchexec.tools.template.BaseTool):
-    def executable(self):
-        if "TRUESAT_BENCHEXEC" in os.environ:
-            return os.environ.get("TRUESAT_BENCHEXEC") + "/cpp_solver/dpllcpp" 
-        else:
-            raise NameError('Please set TRUESAT_BENCHEXEC to the root folder of the TrueSAT repo')
+class Tool(benchexec.tools.template.BaseTool2):
+    def executable(self, tool_locator):
+        return tool_locator.find_executable("dpllcpp", subdir="cpp_solver")
 
     def name(self):
         return "DPLL in CPP"
 
-    def cmdline(self, executable, options, tasks, propertyfile, rlimits):
-        return (
-            [executable]
-            + options
-            + tasks
-        )
+    def cmdline(self, executable, options, task, rlimits):
+        return [executable] + options + [task.single_input_file]
 
-    def get_value_from_output(self, lines, identifier):
-        for line in reversed(lines):
-            pattern = identifier
-            if pattern[-1] != ":":
-                pattern += ":"
-            match = re.match("^" + pattern + "(.*)", line)
-            if match and match.group(1):
-                return match.group(1).strip()
-        return None
+    def determine_result(self, run):
+        status = None
+
+        for line in run.output:
+            if "s SATISFIABLE" in line:
+                status = result.RESULT_TRUE_PROP
+            elif "s UNSATISFIABLE" in line:
+                status = result.RESULT_FALSE_PROP
+
+        if not status:
+            status = result.RESULT_ERROR
+        return status

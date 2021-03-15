@@ -42,9 +42,4 @@
   <tasks name="uuf200-860">
     <include>tests/uuf200-860/*.cnf</include>
   </tasks>
-
-  <columns>
-    <column title="Result">Result</column>
-  </columns>
-
 </benchmark>

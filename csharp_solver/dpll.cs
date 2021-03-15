@@ -166,7 +166,7 @@ namespace satsolver
         bool step(int literal, bool value) {
             increaseDecisionLevel();
             setLiteral(literal, value);
-            bool result = solve();
+            bool result = solve_loop();
             revertLastDecisionLevel();
             return result;
         }
@@ -221,7 +221,7 @@ namespace satsolver
           return -result;
         }
 
-        public bool solve() {
+        public bool solve_loop() {
             if (hasEmptyClauses()) return false;
             if (isEmpty()) return true;
 
@@ -231,14 +231,24 @@ namespace satsolver
             }
             return step(literal, false);
         }
+
+        public bool solve() {
+          for (int i = 0; i < clausesCount; ++i) {
+            if (clauses[i][0] == 1 && truthAssignment[getVariableFromLiteral(clauses[i][1])] == -1) {
+              setLiteral(clauses[i][1], true);
+            }
+          }
+
+          return solve_loop();
+        }
     }
 
     class SATSolver 
     {
         static int Main(string[] args) 
         {
-            Console.WriteLine("Starting...");
-            Console.WriteLine("Notice! There is a hard-coded 7000 limit for the clauses count. Please increase this number for larger test cases.");
+            Console.WriteLine("c Starting...");
+            Console.WriteLine("c Notice! There is a hard-coded 7000 limit for the clauses count. Please increase this number for larger test cases.");
 
             if (args.Length == 0) {
                 System.Console.WriteLine("Please enter a path.");
@@ -293,29 +303,29 @@ namespace satsolver
               }
             }
             long tlf = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            Console.WriteLine("Time to read: {0}s", ((double)tlf-tl)/1000.0);
+            Console.WriteLine("c Time to read: {0}s", ((double)tlf-tl)/1000.0);
 
-            for (int i = 0; i < clausesCount; ++i) {
-              for (int j = 0; j <= clauses[i][0]; ++j) {
-                Console.Write("{0} ", clauses[i][j]);
-              }
-              Console.Write("\n");
-            }
+            // for (int i = 0; i < clausesCount; ++i) {
+            //   for (int j = 0; j <= clauses[i][0]; ++j) {
+            //     Console.Write("{0} ", clauses[i][j]);
+            //   }
+            //   Console.Write("\n");
+            // }
 
             tl = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             Formula formula = new Formula(variablesCount, clausesCount, clauses);
             tlf = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            Console.WriteLine("Time to initialize: {0}s", ((double)tlf-tl)/1000.0);
+            Console.WriteLine("c Time to initialize: {0}s", ((double)tlf-tl)/1000.0);
 
             tl = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             if (formula.solve()) {
-                Console.WriteLine("SAT");
+                Console.WriteLine("s SATISFIABLE");
             } else {
-                Console.WriteLine("UNSAT");
+                Console.WriteLine("s UNSATISFIABLE");
             }
             tlf = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-            Console.WriteLine("Time to solve: {0}s", ((double)tlf-tl)/1000.0);
+            Console.WriteLine("c Time to solve: {0}s", ((double)tlf-tl)/1000.0);
 
             return 0;
         }

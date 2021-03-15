@@ -136,7 +136,7 @@ class Formula
     bool step(int literal, bool value) {
         increaseDecisionLevel();
         setLiteral(literal, value);
-        bool result = solve();
+        bool result = solve_loop();
         revertLastDecisionLevel();
         return result;
     }
@@ -225,7 +225,7 @@ class Formula
         createPositiveNegativeLiteralsToClauses();
     }
 
-    bool solve() {
+    bool solve_loop() {
         if (hasEmptyClauses()) return false;
         if (isEmpty()) return true;
 
@@ -234,6 +234,16 @@ class Formula
             return true;
         }
         return step(literal, false);
+    }
+
+    bool solve() {
+      for (int i = 0; i < clausesCount; ++i) {
+        if (clauses[i][0] == 1) {
+          setLiteral(clauses[i][1], true);
+        }
+      }
+
+      return solve_loop();
     }
 };
 
@@ -253,7 +263,7 @@ int main(int argc, char **argv)
     int clausesCount = 0;
 
     clock_t t_start_parse = clock();
-    cout << "Parsing SAT problem" << endl;
+    cout << "c Parsing SAT problem" << endl;
     if (!parse_problem_header(cin, variablesCount, clausesCount)) {
       cout << "Error reading problem header\n" << endl;
       return -1;
@@ -275,27 +285,26 @@ int main(int argc, char **argv)
       sort(buffer, buffer+k);
       memcpy(clauses[i]+1, buffer, size);
     }
-    printf("Time to read: %.2fs\n", (double)(clock() - t_start_parse)/CLOCKS_PER_SEC);
+    printf("c Time to read: %.2fs\n", (double)(clock() - t_start_parse)/CLOCKS_PER_SEC);
 
-    for (int i = 0; i < clausesCount; ++i) {
-      for (int j = 0; j <= clauses[i][0]; ++j) {
-        printf("%d ", clauses[i][j]);
-      }
-      printf("\n");
-    }
-
+    // for (int i = 0; i < clausesCount; ++i) {
+    //   for (int j = 0; j <= clauses[i][0]; ++j) {
+    //     printf("%d ", clauses[i][j]);
+    //   }
+    //   printf("\n");
+    // }
 
     t_start_parse = clock();
     Formula formula(variablesCount, clausesCount, clauses);
-    printf("Time to initialize: %.2fs\n", (double)(clock() - t_start_parse)/CLOCKS_PER_SEC);
+    printf("c Time to initialize: %.2fs\n", (double)(clock() - t_start_parse)/CLOCKS_PER_SEC);
 
     t_start_parse = clock();
     if (formula.solve()) {
-        printf("SAT\n");
+        printf("s SATISFIABLE\n");
     } else {
-        printf("UNSAT\n");
+        printf("s UNSATISFIABLE\n");
     }
-    printf("Time to solve: %.2fs\n", (double)(clock() - t_start_parse)/CLOCKS_PER_SEC);
+    printf("c Time to solve: %.2fs\n", (double)(clock() - t_start_parse)/CLOCKS_PER_SEC);
 
     return 0;
 }
