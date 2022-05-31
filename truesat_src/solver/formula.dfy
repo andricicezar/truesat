@@ -351,6 +351,7 @@ class Formula extends DataStructures {
     while (i < len)
       modifies trueLiteralsCount;
 
+      invariant len as int == |positivelyImpactedClauses|;
       invariant 0 <= i <= len;
 
       invariant forall i' :: 0 <= i' < clausesCount && i' !in positivelyImpactedClauses ==>
@@ -375,9 +376,26 @@ class Formula extends DataStructures {
       i := i + 1;
     }
 
+    assert trueLiteralsCount.Length == |clauses|;
+    forall i : Int32.t | 0 <= i as int < |clauses|
+      ensures trueLiteralsCount[i] == countTrueLiterals(newTau, clauses[i])
+    {
+      if (i !in positivelyImpactedClauses)
+      {
+        assert trueLiteralsCount[i] == countTrueLiterals(newTau, clauses[i]);
+      }
+      else
+      {
+        var j : Int32.t :| 0 <= j as int < |positivelyImpactedClauses| && positivelyImpactedClauses[j] == i;
+        assert trueLiteralsCount[i] == countTrueLiterals(newTau, clauses[i]);
+      }
+    }
+    assert newTau == truthAssignment[..];
+
     i := 0;
 
     len := |negativelyImpactedClauses| as Int32.t;
+    modify falseLiteralsCount {
     while (i < len)
       modifies falseLiteralsCount;
       invariant 0 <= i <= len;
@@ -394,6 +412,19 @@ class Formula extends DataStructures {
         falseLiteralsCount[i']
           == countFalseLiterals(newTau, clauses[i']);
 
+      invariant forall i' :: 0 <= i' < clausesCount && i' !in positivelyImpactedClauses ==>
+        trueLiteralsCount[i']
+          == countTrueLiterals(newTau, clauses[i']);
+
+      invariant forall i' :: 0 <= i' < |positivelyImpactedClauses| ==>
+        trueLiteralsCount[positivelyImpactedClauses[i']]
+          == countTrueLiterals(newTau, clauses[positivelyImpactedClauses[i']]);
+
+      // invariant forall i' :: 0 <= i' < |positivelyImpactedClauses| ==>
+      //   trueLiteralsCount[positivelyImpactedClauses[i']]
+      //     == countTrueLiterals(previousTau, clauses[positivelyImpactedClauses[i']]);
+      invariant validTrueLiteralsCount(truthAssignment[..]);
+
       decreases len - i;
     {
       var clauseIndex := negativelyImpactedClauses[i];
@@ -402,7 +433,22 @@ class Formula extends DataStructures {
       falseLiteralsCount[clauseIndex] := falseLiteralsCount[clauseIndex] - 1;
       i := i + 1;
     }
-
+    }
+    assert falseLiteralsCount.Length == |clauses|;
+    forall i : Int32.t | 0 <= i as int < |clauses|
+      ensures falseLiteralsCount[i] == countFalseLiterals(newTau, clauses[i])
+    {
+      if (i !in negativelyImpactedClauses)
+      {
+        assert falseLiteralsCount[i] == countFalseLiterals(newTau, clauses[i]);
+      }
+      else
+      {
+        var j : Int32.t :| 0 <= j as int < |negativelyImpactedClauses| && negativelyImpactedClauses[j] == i;
+        assert falseLiteralsCount[i] == countFalseLiterals(newTau, clauses[i]);
+      }
+    }
+    assert newTau == truthAssignment[..];
     assert old(traceVariable[..]) == traceVariable[..];
   }
 
@@ -520,6 +566,21 @@ class Formula extends DataStructures {
       i := i + 1;
     }
 
+    assert trueLiteralsCount.Length == |clauses|;
+    forall i : Int32.t | 0 <= i as int < |clauses|
+      ensures trueLiteralsCount[i] == countTrueLiterals(newTau, clauses[i])
+    {
+      if (i !in impactedClauses)
+      {
+        assert trueLiteralsCount[i] == countTrueLiterals(newTau, clauses[i]);
+      }
+      else
+      {
+        var j : Int32.t :| 0 <= j as int < |impactedClauses| && impactedClauses[j] == i;
+        assert trueLiteralsCount[i] == countTrueLiterals(newTau, clauses[i]);
+      }
+    }
+    assert newTau == truthAssignment[..];
     assert validTrueLiteralsCount(truthAssignment[..]);
 
     var i' : Int32.t := 0;
@@ -558,6 +619,21 @@ class Formula extends DataStructures {
       i' := i' + 1;
     }
 
+    assert falseLiteralsCount.Length == |clauses|;
+    forall i : Int32.t | 0 <= i as int < |clauses|
+      ensures falseLiteralsCount[i] == countFalseLiterals(newTau, clauses[i])
+    {
+      if (i !in impactedClauses)
+      {
+        assert falseLiteralsCount[i] == countFalseLiterals(newTau, clauses[i]);
+      }
+      else
+      {
+        var j : Int32.t :| 0 <= j as int < |impactedClauses| && impactedClauses[j] == i;
+        assert falseLiteralsCount[i] == countFalseLiterals(newTau, clauses[i]);
+      }
+    }
+    assert newTau == truthAssignment[..];
     assert validFalseLiteralsCount(truthAssignment[..]);
 
     variableSet_countUnsetVariablesLessThanLength(newTau, variable);
@@ -1098,7 +1174,7 @@ class Formula extends DataStructures {
       invariant -1 <= k < clauseLen;
       invariant forall k' :: k < k' < clauseLen ==>
         getLiteralValue(tau, clause[k']) != 1;
-      invariant k >=0 ==> countTrueLiterals(tau, clause[k..]) == 0;
+      invariant countTrueLiterals(tau, clause[k + 1..]) == 0;
       invariant countFalseLiterals(tau, clause[k+1..]) == flc;
       invariant flc == clauseLen-1-k ==> ok == false;
       invariant flc < clauseLen-1-k ==> ok == true;
@@ -1798,18 +1874,31 @@ class Formula extends DataStructures {
     }
     var k := |clause| - 1;
 
-    while (k >= 0)
+    while (k >= 0 && clause[k] != literal)
       invariant -1 <= k < |clause|;
-
-      invariant forall j :: k < j < |clause| && clause[j] != literal ==>
-            countTrueLiterals(tau, clause[j..]) as int <= |clause[j..]|;
+      invariant countTrueLiterals(tau, clause[k + 1..]) as int <= |clause[k + 1..]|;
+      invariant forall j :: k < j < |clause| ==> clause[j] != literal;
       decreases k;
     {
-      if (clause[k] == literal) {
-        assert getLiteralValue(tau, clause[k]) == -1;
-      }
-
       k := k - 1;
+    }
+    if (k < 0)
+    {
+      assert false;
+    }
+    else
+    {
+      assert clause[k] == literal;
+      assert getLiteralValue(tau, clause[k]) == -1;
+      assert countTrueLiterals(tau, clause[k..]) as int < |clause[k..]|;
+      k := k - 1;
+      while (k >= 0)
+        invariant -1 <= k < |clause|;
+        invariant countTrueLiterals(tau, clause[k + 1..]) as int < |clause[k + 1..]|;
+        decreases k;
+      {
+        k := k - 1;
+      }
     }
   }
 
@@ -1828,19 +1917,31 @@ class Formula extends DataStructures {
     }
     var k := |clause| - 1;
 
-    while (k >= 0)
+    while (k >= 0 && clause[k] != literal)
       invariant -1 <= k < |clause|;
-
-      invariant forall j :: k < j < |clause| && clause[j] != literal ==>
-            countFalseLiterals(tau, clause[j..]) as int <= |clause[j..]|;
-
+      invariant countFalseLiterals(tau, clause[k + 1..]) as int <= |clause[k + 1..]|;
+      invariant forall j :: k < j < |clause| ==> clause[j] != literal;
       decreases k;
     {
-      if (clause[k] == literal) {
-        assert getLiteralValue(tau, clause[k]) == -1;
-      }
-
       k := k - 1;
+    }
+    if (k < 0)
+    {
+      assert false;
+    }
+    else
+    {
+      assert clause[k] == literal;
+      assert getLiteralValue(tau, clause[k]) == -1;
+      assert countFalseLiterals(tau, clause[k..]) as int < |clause[k..]|;
+      k := k - 1;
+      while (k >= 0)
+        invariant -1 <= k < |clause|;
+        invariant countFalseLiterals(tau, clause[k + 1..]) as int < |clause[k + 1..]|;
+        decreases k;
+      {
+        k := k - 1;
+      }
     }
   }
 

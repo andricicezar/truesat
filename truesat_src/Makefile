@@ -1,5 +1,5 @@
 verify:
-	dafny /compile:0 /vcsCores:4 /errorLimit:1 /trace *.dfy solver/*.dfy
+	dafny /compile:0 /vcsCores:8 /errorLimit:1 /trace *.dfy solver/*.dfy
 
 build:
 	dafny /compileTarget:cs /spillTargetCode:1 /compile:2 truesat.dfy file_input.cs

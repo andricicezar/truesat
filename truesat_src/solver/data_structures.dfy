@@ -387,9 +387,8 @@ trait DataStructures {
   function countFalseLiterals(truthAssignment : seq<Int32.t>, clause : seq<Int32.t>) : Int32.t
     reads `variablesCount, `clauseLength, clauseLength;
     requires validVariablesCount();
-    requires validClause(clause);
     requires validValuesTruthAssignment(truthAssignment);
-
+    requires validClause(clause);
     ensures 0 <= countFalseLiterals(truthAssignment, clause) as int <= |clause|;
   {
     if |clause| == 0 then 0

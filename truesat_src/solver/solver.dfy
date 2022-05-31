@@ -31,6 +31,7 @@ class SATSolver {
              formula.falseLiteralsCount;
 
     ensures formula.valid();
+    ensures !formula.hasEmptyClause();
     ensures old(formula.decisionLevel) == formula.decisionLevel;
     ensures old(formula.assignmentsTrace) == formula.assignmentsTrace;
     ensures forall i :: 0 <= i <= formula.decisionLevel ==>
@@ -38,6 +39,7 @@ class SATSolver {
     ensures formula.decisionLevel > -1 ==>
       formula.traceDLStart[formula.decisionLevel] <
         formula.traceDLEnd[formula.decisionLevel];
+    ensures !formula.isEmpty();
 
     ensures result.SAT? ==> formula.validValuesTruthAssignment(result.tau);
     ensures result.SAT? ==> (
