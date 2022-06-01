@@ -2,7 +2,7 @@
 <!DOCTYPE benchmark PUBLIC "+//IDN sosy-lab.org//DTD BenchExec benchmark 1.18//EN" "https://www.sosy-lab.org/benchexec/benchmark-1.18.dtd">
 <benchmark tool="bench.truesat"
            displayName="TrueSAT"
-      	   timelimit="5000s"
+      	   timelimit="120s"
            memlimit="1024MB"
            cpuCores="1"
            threads="4">

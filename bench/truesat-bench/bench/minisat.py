@@ -5,7 +5,7 @@ import re
 
 class Tool(benchexec.tools.template.BaseTool2):
     def executable(self, tool_locator):
-        return tool_locator.find_executable("minisat_static", subdir="core")
+        return tool_locator.find_executable("minisat_static")
 
     def name(self):
         return "MiniSAT v2.2.0"

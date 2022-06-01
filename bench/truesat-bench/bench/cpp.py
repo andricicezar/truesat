@@ -7,10 +7,10 @@ import os
 
 class Tool(benchexec.tools.template.BaseTool2):
     def executable(self, tool_locator):
-        return tool_locator.find_executable("dpllcpp", subdir="cpp_solver")
+        return tool_locator.find_executable("dpllcpp")
 
     def name(self):
-        return "DPLL in CPP"
+        return "DPLL (C++)"
 
     def cmdline(self, executable, options, task, rlimits):
         return [executable] + options + [task.single_input_file]

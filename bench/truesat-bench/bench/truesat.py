@@ -10,7 +10,7 @@ class Tool(benchexec.tools.template.BaseTool2):
         return util.find_executable("mono")
 
     def name(self):
-        return "Truesat"
+        return "TrueSAT"
 
     def cmdline(self, executable, options, task, rlimits):
         return [executable, self.tool_locator2.find_executable("truesat.exe")] + options + [task.single_input_file]

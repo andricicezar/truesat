@@ -9,7 +9,7 @@ class Tool(benchexec.tools.template.BaseTool2):
         return util.find_executable("mono")
 
     def name(self):
-        return "DPLL in C#"
+        return "DPLL (C#)"
 
     def cmdline(self, executable, options, task, rlimits):
         return [executable, self.tool_locator2.find_executable("dpll.exe")] + options + [task.single_input_file]

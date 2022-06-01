@@ -59,6 +59,9 @@ def modify_files(destination):
     for root, _dirs, files in os.walk(destination):
         for filename in files:
             cut_the_last_2_lines(os.path.join(root, filename))
+            cmd = "sed -i 's/ \\{{1,\\}}/ /g' {0}".format(os.path.join(root, filename))
+            print("Doing {0}.".format(cmd))
+            os.system(cmd)
 
 def download_test_archive(url):
     print (url)

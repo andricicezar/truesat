@@ -1,14 +1,14 @@
 // Dafny program truesat.dfy compiled into C#
-// To recompile, use 'csc' with: /r:System.Numerics.dll
-// and choosing /target:exe or /target:library
-// You might also want to include compiler switches like:
-//     /debug /nowarn:0164 /nowarn:0219 /nowarn:1717 /nowarn:0162 /nowarn:0168
+// To recompile, you will need the libraries
+//     System.Runtime.Numerics.dll System.Collections.Immutable.dll
+// but the 'dotnet' tool in net6.0 should pick those up automatically.
+// Optionally, you may want to include compiler switches like
+//     /debug /nowarn:162,164,168,183,219,436,1717,1718
 
 using System;
 using System.Numerics;
-[assembly: DafnyAssembly.DafnySourceAttribute(@"
-// Dafny 2.3.0.10506
-// Command Line Options: /trace /vcsCores 1 /errorLimit 5 /proc ** /compileTarget:cs /spillTargetCode:1 /compile:2 truesat.dfy file_input.cs
+[assembly: DafnyAssembly.DafnySourceAttribute(@"// Dafny 3.6.0.40511
+// Command Line Options: /compileTarget:cs /compileVerbose:1 /spillTargetCode:1 /compile:2 truesat.dfy file_input.cs
 // truesat.dfy
 
 method Main()
@@ -18,11 +18,10 @@ method Main()
   var totalTime: real := (Input.getTimestamp() - starttime) as real / 1000.0;
   print ""c Time to read: "", totalTime, ""s\n"";
   match input {
-    case Error(m) =>
+    case {:split false} Error(m) =>
       print ""c Error: "", m, ""\n"";
-    case Just(z) =>
+    case {:split false} Just(z) =>
       var (variablesCount, clauses) := z;
-
       starttime := Input.getTimestamp();
       var formula := new Formula(variablesCount, clauses);
       var solver := new SATSolver(formula);
@@ -33,9 +32,9 @@ method Main()
       totalTime := (Input.getTimestamp() - starttime) as real / 1000.0;
       print ""c Time to solve: "", totalTime, ""s\n"";
       match solution {
-        case SAT(x) =>
+        case {:split false} SAT(x) =>
           print ""s SATISFIABLE\n"";
-        case UNSAT =>
+        case {:split false} UNSAT =>
           print ""s UNSATISFIABLE\n"";
       }
   }
@@ -79,10 +78,12 @@ class SATSolver {
     requires formula.getLiteralValue(formula.truthAssignment[..], literal) == -1
     modifies formula.truthAssignment, formula.traceVariable, formula.traceValue, formula.traceDLStart, formula.traceDLEnd, formula`decisionLevel, formula`assignmentsTrace, formula.trueLiteralsCount, formula.falseLiteralsCount
     ensures formula.valid()
+    ensures !formula.hasEmptyClause()
     ensures old(formula.decisionLevel) == formula.decisionLevel
     ensures old(formula.assignmentsTrace) == formula.assignmentsTrace
     ensures forall i: Int32.t :: 0 <= i <= formula.decisionLevel ==> old(formula.getDecisionLevel(i)) == formula.getDecisionLevel(i)
     ensures formula.decisionLevel > -1 ==> formula.traceDLStart[formula.decisionLevel] < formula.traceDLEnd[formula.decisionLevel]
+    ensures !formula.isEmpty()
     ensures result.SAT? ==> formula.validValuesTruthAssignment(result.tau)
     ensures result.SAT? ==> var (variable: Int32.t, val: Int32.t) := formula.convertLVtoVI(literal, value); formula.isSatisfiableExtend(formula.truthAssignment[..][variable as int := val])
     ensures result.UNSAT? ==> var (variable: Int32.t, val: Int32.t) := formula.convertLVtoVI(literal, value); !formula.isSatisfiableExtend(formula.truthAssignment[..][variable as int := val])
@@ -158,15 +159,15 @@ class SATSolver {
 
 module Input {
 
-  import Int32 = Int32
+  import Int32
 
-  import opened Useless = Useless
+  import opened Useless
 
-  import FileInput = FileInput
+  import FileInput
 
-  import opened MyDatatypes = MyDatatypes
+  import opened MyDatatypes
 
-  import InputPredicate = InputPredicate
+  import InputPredicate
   method getInput() returns (result: Maybe<(Int32.t, seq<seq<Int32.t>>)>)
     ensures result.Just? ==> InputPredicate.valid(result.value)
   {
@@ -192,7 +193,7 @@ module MyDatatypes {
 
 module InputPredicate {
 
-  import Int32 = Int32
+  import Int32
   function countLiterals(clauses: seq<seq<Int32.t>>): int
     decreases clauses
   {
@@ -294,7 +295,7 @@ class Formula extends DataStructures {
     assert countLiterals(clausesCount) == InputPredicate.countLiterals(clauses);
   }
 
-  lemma /*{:_induction cI}*/ inputPredicate_countLiterals(cI: Int32.t)
+  lemma /*{:_induction this, cI}*/ inputPredicate_countLiterals(cI: Int32.t)
     requires validVariablesCount()
     requires validClauses()
     requires 0 <= cI <= clausesCount
@@ -466,6 +467,7 @@ class Formula extends DataStructures {
     var i: Int32.t := 0;
     var len := |positivelyImpactedClauses| as Int32.t;
     while i < len
+      invariant len as int == |positivelyImpactedClauses|
       invariant 0 <= i <= len
       invariant forall i': Int32.t :: 0 <= i' < clausesCount && i' !in positivelyImpactedClauses ==> trueLiteralsCount[i'] == countTrueLiterals(newTau, clauses[i'])
       invariant forall i': Int32.t :: 0 <= i' < i ==> trueLiteralsCount[positivelyImpactedClauses[i']] == countTrueLiterals(newTau, clauses[positivelyImpactedClauses[i']])
@@ -480,21 +482,50 @@ class Formula extends DataStructures {
       trueLiteralsCount[clauseIndex] := trueLiteralsCount[clauseIndex] - 1;
       i := i + 1;
     }
+    assert trueLiteralsCount.Length == |clauses|;
+    forall i: Int32.t | 0 <= i as int < |clauses|
+      ensures trueLiteralsCount[i] == countTrueLiterals(newTau, clauses[i])
+    {
+      if i !in positivelyImpactedClauses {
+        assert trueLiteralsCount[i] == countTrueLiterals(newTau, clauses[i]);
+      } else {
+        ghost var j: Int32.t :| 0 <= j as int < |positivelyImpactedClauses| && positivelyImpactedClauses[j] == i;
+        assert trueLiteralsCount[i] == countTrueLiterals(newTau, clauses[i]);
+      }
+    }
+    assert newTau == truthAssignment[..];
     i := 0;
     len := |negativelyImpactedClauses| as Int32.t;
-    while i < len
-      invariant 0 <= i <= len
-      invariant forall i': Int32.t :: 0 <= i' < i ==> falseLiteralsCount[negativelyImpactedClauses[i']] == countFalseLiterals(newTau, clauses[negativelyImpactedClauses[i']])
-      invariant forall i': Int32.t :: i <= i' < len ==> falseLiteralsCount[negativelyImpactedClauses[i']] == countFalseLiterals(previousTau, clauses[negativelyImpactedClauses[i']])
-      invariant forall i': Int32.t :: 0 <= i' < clausesCount && i' !in negativelyImpactedClauses ==> falseLiteralsCount[i'] == countFalseLiterals(newTau, clauses[i'])
-      decreases len - i
-      modifies falseLiteralsCount
-    {
-      var clauseIndex := negativelyImpactedClauses[i];
-      unsetVariable_countFalseLiteralsDecreasesWithOne(previousTau, newTau, variable, clauses[clauseIndex]);
-      falseLiteralsCount[clauseIndex] := falseLiteralsCount[clauseIndex] - 1;
-      i := i + 1;
+    modify falseLiteralsCount {
+      while i < len
+        invariant 0 <= i <= len
+        invariant forall i': Int32.t :: 0 <= i' < i ==> falseLiteralsCount[negativelyImpactedClauses[i']] == countFalseLiterals(newTau, clauses[negativelyImpactedClauses[i']])
+        invariant forall i': Int32.t :: i <= i' < len ==> falseLiteralsCount[negativelyImpactedClauses[i']] == countFalseLiterals(previousTau, clauses[negativelyImpactedClauses[i']])
+        invariant forall i': Int32.t :: 0 <= i' < clausesCount && i' !in negativelyImpactedClauses ==> falseLiteralsCount[i'] == countFalseLiterals(newTau, clauses[i'])
+        invariant forall i': Int32.t :: 0 <= i' < clausesCount && i' !in positivelyImpactedClauses ==> trueLiteralsCount[i'] == countTrueLiterals(newTau, clauses[i'])
+        invariant forall i': int :: 0 <= i' < |positivelyImpactedClauses| ==> trueLiteralsCount[positivelyImpactedClauses[i']] == countTrueLiterals(newTau, clauses[positivelyImpactedClauses[i']])
+        invariant validTrueLiteralsCount(truthAssignment[..])
+        decreases len - i
+        modifies falseLiteralsCount
+      {
+        var clauseIndex := negativelyImpactedClauses[i];
+        unsetVariable_countFalseLiteralsDecreasesWithOne(previousTau, newTau, variable, clauses[clauseIndex]);
+        falseLiteralsCount[clauseIndex] := falseLiteralsCount[clauseIndex] - 1;
+        i := i + 1;
+      }
     }
+    assert falseLiteralsCount.Length == |clauses|;
+    forall i: Int32.t | 0 <= i as int < |clauses|
+      ensures falseLiteralsCount[i] == countFalseLiterals(newTau, clauses[i])
+    {
+      if i !in negativelyImpactedClauses {
+        assert falseLiteralsCount[i] == countFalseLiterals(newTau, clauses[i]);
+      } else {
+        ghost var j: Int32.t :| 0 <= j as int < |negativelyImpactedClauses| && negativelyImpactedClauses[j] == i;
+        assert falseLiteralsCount[i] == countFalseLiterals(newTau, clauses[i]);
+      }
+    }
+    assert newTau == truthAssignment[..];
     assert old(traceVariable[..]) == traceVariable[..];
   }
 
@@ -561,6 +592,18 @@ class Formula extends DataStructures {
       assert isClauseSatisfied(newTau, clauseIndex);
       i := i + 1;
     }
+    assert trueLiteralsCount.Length == |clauses|;
+    forall i: Int32.t | 0 <= i as int < |clauses|
+      ensures trueLiteralsCount[i] == countTrueLiterals(newTau, clauses[i])
+    {
+      if i !in impactedClauses {
+        assert trueLiteralsCount[i] == countTrueLiterals(newTau, clauses[i]);
+      } else {
+        ghost var j: Int32.t :| 0 <= j as int < |impactedClauses| && impactedClauses[j] == i;
+        assert trueLiteralsCount[i] == countTrueLiterals(newTau, clauses[i]);
+      }
+    }
+    assert newTau == truthAssignment[..];
     assert validTrueLiteralsCount(truthAssignment[..]);
     var i': Int32.t := 0;
     var impactedClausesLen': Int32.t := |impactedClauses'| as Int32.t;
@@ -578,12 +621,24 @@ class Formula extends DataStructures {
       falseLiteralsCount[clauseIndex] := falseLiteralsCount[clauseIndex] + 1;
       i' := i' + 1;
     }
+    assert falseLiteralsCount.Length == |clauses|;
+    forall i: Int32.t | 0 <= i as int < |clauses|
+      ensures falseLiteralsCount[i] == countFalseLiterals(newTau, clauses[i])
+    {
+      if i !in impactedClauses {
+        assert falseLiteralsCount[i] == countFalseLiterals(newTau, clauses[i]);
+      } else {
+        ghost var j: Int32.t :| 0 <= j as int < |impactedClauses| && impactedClauses[j] == i;
+        assert falseLiteralsCount[i] == countFalseLiterals(newTau, clauses[i]);
+      }
+    }
+    assert newTau == truthAssignment[..];
     assert validFalseLiteralsCount(truthAssignment[..]);
     variableSet_countUnsetVariablesLessThanLength(newTau, variable);
     setVariable_unsetVariablesDecreasesWithOne(oldTau, newTau, variable);
   }
 
-  lemma traceFull_variableInTrace(variable: Int32.t)
+  lemma /*{:_induction this}*/ traceFull_variableInTrace(variable: Int32.t)
     requires valid()
     requires validVariable(variable)
     requires 0 <= decisionLevel
@@ -593,7 +648,7 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma existsUnsetLiteral_traceNotFull(variable: Int32.t)
+  lemma /*{:_induction this}*/ existsUnsetLiteral_traceNotFull(variable: Int32.t)
     requires valid()
     requires validVariable(variable)
     requires truthAssignment[variable] == -1
@@ -629,7 +684,7 @@ class Formula extends DataStructures {
     forall_validAssignmentTrace_traceDLEndStrictlyOrdered();
   }
 
-  lemma forall_validAssignmentTrace_traceDLStartStrictlyOrdered()
+  lemma /*{:_induction this}*/ forall_validAssignmentTrace_traceDLStartStrictlyOrdered()
     requires 0 <= decisionLevel
     requires decisionLevel as int < traceDLStart.Length
     requires decisionLevel as int < traceDLEnd.Length
@@ -637,7 +692,7 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma validAssignmentTrace_traceDLStartStrictlyOrdered(i: Int32.t, j: Int32.t)
+  lemma /*{:_induction this}*/ validAssignmentTrace_traceDLStartStrictlyOrdered(i: Int32.t, j: Int32.t)
     requires validVariablesCount()
     requires validAssignmentTrace()
     requires 0 <= i < j <= decisionLevel
@@ -646,7 +701,7 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma forall_validAssignmentTrace_traceDLEndStrictlyOrdered()
+  lemma /*{:_induction this}*/ forall_validAssignmentTrace_traceDLEndStrictlyOrdered()
     requires 0 <= decisionLevel
     requires decisionLevel as int < traceDLStart.Length
     requires decisionLevel as int < traceDLEnd.Length
@@ -655,7 +710,7 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma validAssignmentTrace_traceDLEndStrictlyOrdered(i: Int32.t)
+  lemma /*{:_induction this}*/ validAssignmentTrace_traceDLEndStrictlyOrdered(i: Int32.t)
     requires validVariablesCount()
     requires validAssignmentTrace()
     requires 0 <= i < decisionLevel
@@ -750,8 +805,7 @@ class Formula extends DataStructures {
     ghost var tau'' := truthAssignment[..];
     var literal := extractUnsetLiteralFromClause(clauseIndex);
     var clause := clauses[clauseIndex];
-    var (v', val') := convertLVtoVI(literal, true);
-
+    ghost var (v', val') := convertLVtoVI(literal, true);
     unitClauseLiteralFalse_tauNotSatisfiable(tau'', clauseIndex, literal);
     setLiteral(literal, true);
     assert isSatisfiableExtend(tau''[v' as int := val']) <==> isSatisfiableExtend(truthAssignment[..]);
@@ -823,8 +877,7 @@ class Formula extends DataStructures {
     ensures var (variable: Int32.t, val: Int32.t) := convertLVtoVI(literal, value); isSatisfiableExtend(old(truthAssignment[..])[variable as int := val]) <==> isSatisfiableExtend(truthAssignment[..])
     decreases countUnsetVariables(truthAssignment[..]), 0
   {
-    var (vari, val) := convertLVtoVI(literal, value);
-
+    ghost var (vari, val) := convertLVtoVI(literal, value);
     ghost var tau' := truthAssignment[..][vari as int := val];
     var variable := getVariableFromLiteral(literal);
     var value' := if literal > 0 then value else !value;
@@ -892,7 +945,7 @@ class Formula extends DataStructures {
     return -result;
   }
 
-  lemma maybeClause_existUnsetLiteralInClause(clauseIndex: Int32.t)
+  lemma /*{:_induction this}*/ maybeClause_existUnsetLiteralInClause(clauseIndex: Int32.t)
     requires valid()
     requires 0 <= clauseIndex < clausesCount
     requires trueLiteralsCount[clauseIndex] == 0
@@ -902,7 +955,7 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma notEmptyNoEmptyClauses_existUnsetLiteralInClauses()
+  lemma /*{:_induction this}*/ notEmptyNoEmptyClauses_existUnsetLiteralInClauses()
     requires valid()
     requires !hasEmptyClause()
     requires !isEmpty()
@@ -918,7 +971,7 @@ class Formula extends DataStructures {
     decreases {this, traceDLStart, traceDLEnd, traceVariable, traceValue, truthAssignment, trueLiteralsCount, falseLiteralsCount, clauseLength, positiveLiteralsToClauses, negativeLiteralsToClauses}
   {
     if exists i: Int32.t :: 0 <= i < clausesCount && falseLiteralsCount[i] == clauseLength[i] then
-      var i: Int32.t :| 0 <= i < clausesCount && falseLiteralsCount[i] == clauseLength[i];
+      ghost var i: Int32.t :| 0 <= i < clausesCount && falseLiteralsCount[i] == clauseLength[i];
       true
     else
       false
@@ -953,7 +1006,7 @@ class Formula extends DataStructures {
     decreases {this, traceDLStart, traceDLEnd, traceVariable, traceValue, truthAssignment, trueLiteralsCount, falseLiteralsCount, clauseLength, positiveLiteralsToClauses, negativeLiteralsToClauses}
   {
     if exists i: Int32.t :: 0 <= i < clausesCount && trueLiteralsCount[i] == 0 then
-      var i: Int32.t :| 0 <= i < clausesCount && trueLiteralsCount[i] == 0;
+      ghost var i: Int32.t :| 0 <= i < clausesCount && trueLiteralsCount[i] == 0;
       false
     else
       true
@@ -1007,7 +1060,7 @@ class Formula extends DataStructures {
     }
   }
 
-  lemma notEmptyNoEmptyClauses_traceNotFull()
+  lemma /*{:_induction this}*/ notEmptyNoEmptyClauses_traceNotFull()
     requires valid()
     requires !hasEmptyClause()
     requires !isEmpty()
@@ -1042,7 +1095,7 @@ class Formula extends DataStructures {
       x.0 == variable
   }
 
-  lemma ifFull_containsAllVariables()
+  lemma /*{:_induction this}*/ ifFull_containsAllVariables()
     requires valid()
     requires !hasEmptyClause()
     requires !isEmpty()
@@ -1053,14 +1106,14 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma allVariablesSet_done()
+  lemma /*{:_induction this}*/ allVariablesSet_done()
     requires valid()
     requires forall v: Int32.t :: validVariable(v) ==> isVariableSet(truthAssignment[..], v)
     ensures hasEmptyClause() || isEmpty()
   {
   }
 
-  lemma tauFullClauseNotEmpty_clauseIsSatisfied(cI: int)
+  lemma /*{:_induction this}*/ tauFullClauseNotEmpty_clauseIsSatisfied(cI: int)
     requires valid()
     requires 0 <= cI < |clauses|
     requires validClause(clauses[cI])
@@ -1071,7 +1124,7 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma /*{:_induction clause, truthAssignment}*/ existsTrueLiteral_countTrueLiteralsPositive(clause: seq<Int32.t>, truthAssignment: seq<Int32.t>)
+  lemma /*{:_induction this, clause, truthAssignment}*/ existsTrueLiteral_countTrueLiteralsPositive(clause: seq<Int32.t>, truthAssignment: seq<Int32.t>)
     requires valid()
     requires validValuesTruthAssignment(truthAssignment)
     requires validClause(clause)
@@ -1081,7 +1134,7 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma unitClause_existsUnsetLiteral(clauseIndex: Int32.t)
+  lemma /*{:_induction this}*/ unitClause_existsUnsetLiteral(clauseIndex: Int32.t)
     requires valid()
     requires 0 <= clauseIndex as int < |clauses|
     requires validClause(clauses[clauseIndex])
@@ -1092,14 +1145,14 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma hasEmptyClause_notSatisfiable()
+  lemma /*{:_induction this}*/ hasEmptyClause_notSatisfiable()
     requires valid()
     requires hasEmptyClause()
     ensures !isSatisfiableExtend(truthAssignment[..])
   {
   }
 
-  lemma allLiteralsSetToFalse_clauseUnsatisfied(clauseIndex: Int32.t)
+  lemma /*{:_induction this}*/ allLiteralsSetToFalse_clauseUnsatisfied(clauseIndex: Int32.t)
     requires valid()
     requires 0 <= clauseIndex as int < |clauses|
     requires falseLiteralsCount[clauseIndex] as int == |clauses[clauseIndex]|
@@ -1109,7 +1162,7 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma isEmpty_sastisfied()
+  lemma /*{:_induction this}*/ isEmpty_sastisfied()
     requires valid()
     requires !hasEmptyClause()
     requires isEmpty()
@@ -1117,7 +1170,7 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma partialTauSatisfied_isSatisfiableExtend(tau: seq<Int32.t>)
+  lemma /*{:_induction this}*/ partialTauSatisfied_isSatisfiableExtend(tau: seq<Int32.t>)
     requires validVariablesCount()
     requires validValuesTruthAssignment(tau)
     requires validClauses()
@@ -1127,7 +1180,7 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma unitClause_allFalseExceptLiteral(truthAssignment: seq<Int32.t>, clauseIndex: Int32.t, literal: Int32.t)
+  lemma /*{:_induction this}*/ unitClause_allFalseExceptLiteral(truthAssignment: seq<Int32.t>, clauseIndex: Int32.t, literal: Int32.t)
     requires validVariablesCount()
     requires validClauses()
     requires validValuesTruthAssignment(truthAssignment)
@@ -1145,7 +1198,7 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma unitClauseLiteralFalse_tauNotSatisfiable(truthAssignment: seq<Int32.t>, clauseIndex: Int32.t, literal: Int32.t)
+  lemma /*{:_induction this}*/ unitClauseLiteralFalse_tauNotSatisfiable(truthAssignment: seq<Int32.t>, clauseIndex: Int32.t, literal: Int32.t)
     requires validVariablesCount()
     requires validClauses()
     requires validValuesTruthAssignment(truthAssignment)
@@ -1163,7 +1216,7 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma /*{:_induction tau}*/ variableSet_countUnsetVariablesLessThanLength(tau: seq<Int32.t>, variable: Int32.t)
+  lemma /*{:_induction this, tau}*/ variableSet_countUnsetVariablesLessThanLength(tau: seq<Int32.t>, variable: Int32.t)
     requires |tau| <= Int32.max as int
     requires 0 <= variable as int < |tau|
     requires tau[variable] in [0, 1]
@@ -1172,7 +1225,7 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma /*{:_induction tau, clause}*/ unsetVariable_countTrueLiteralsLessThanLength(tau: seq<Int32.t>, variable: Int32.t, clause: seq<Int32.t>)
+  lemma /*{:_induction this, tau, clause}*/ unsetVariable_countTrueLiteralsLessThanLength(tau: seq<Int32.t>, variable: Int32.t, clause: seq<Int32.t>)
     requires validVariablesCount()
     requires validValuesTruthAssignment(tau)
     requires validClause(clause)
@@ -1184,7 +1237,7 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma /*{:_induction tau, clause}*/ unsetVariable_countFalseLiteralsLessThanLength(tau: seq<Int32.t>, variable: Int32.t, clause: seq<Int32.t>)
+  lemma /*{:_induction this, tau, clause}*/ unsetVariable_countFalseLiteralsLessThanLength(tau: seq<Int32.t>, variable: Int32.t, clause: seq<Int32.t>)
     requires validVariablesCount()
     requires validValuesTruthAssignment(tau)
     requires validClause(clause)
@@ -1196,7 +1249,7 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma forVariableNotSatisfiableExtend_notSatisfiableExtend(tau: seq<Int32.t>, variable: Int32.t)
+  lemma /*{:_induction this}*/ forVariableNotSatisfiableExtend_notSatisfiableExtend(tau: seq<Int32.t>, variable: Int32.t)
     requires validVariablesCount()
     requires validClauses()
     requires validValuesTruthAssignment(tau)
@@ -1208,7 +1261,7 @@ class Formula extends DataStructures {
   {
   }
 
-  lemma extensionSatisfiable_baseSatisfiable(tau: seq<Int32.t>, variable: Int32.t, value: Int32.t)
+  lemma /*{:_induction this}*/ extensionSatisfiable_baseSatisfiable(tau: seq<Int32.t>, variable: Int32.t, value: Int32.t)
     requires validVariablesCount()
     requires validClauses()
     requires validValuesTruthAssignment(tau)
@@ -1224,11 +1277,11 @@ class Formula extends DataStructures {
 
 module Useless {
 
-  import opened MyDatatypes = MyDatatypes
+  import opened MyDatatypes
 
-  import Int32 = Int32
+  import Int32
 
-  import InputPredicate = InputPredicate
+  import InputPredicate
   class Parser {
     var content: array<char>
     var contentLength: Int32.t
@@ -1261,7 +1314,7 @@ module Useless {
     {
       while cursor < contentLength && content[cursor] != '\n'
         invariant 0 <= cursor <= contentLength
-        decreases contentLength as int - cursor as int
+        decreases contentLength as int - cursor as int, if cursor < contentLength then if content[cursor] <= '\n' then '\n' as int - content[cursor] as int else content[cursor] as int - '\n' as int else 0 - 1
       {
         cursor := cursor + 1;
       }
@@ -1279,7 +1332,7 @@ module Useless {
     {
       while cursor < contentLength && !('0' <= content[cursor] <= '9' || content[cursor] == '-')
         invariant 0 <= cursor <= contentLength
-        decreases contentLength as int - cursor as int
+        decreases contentLength as int - cursor as int, if cursor < contentLength && !('0' <= content[cursor] <= '9') then if content[cursor] <= '-' then '-' as int - content[cursor] as int else content[cursor] as int - '-' as int else 0 - 1
       {
         cursor := cursor + 1;
       }
@@ -1354,11 +1407,11 @@ module Useless {
           toNextNumber();
           var x := extractNumber();
           match x {
-            case Error(t) =>
+            case {:split false} Error(t) =>
               {
                 return Error(t);
               }
-            case Just(number) =>
+            case {:split false} Just(number) =>
               {
                 if 0 < number < Int32.max {
                   variablesCount := number;
@@ -1371,11 +1424,11 @@ module Useless {
           toNextNumber();
           x := extractNumber();
           match x {
-            case Error(t) =>
+            case {:split false} Error(t) =>
               {
                 return Error(t);
               }
-            case Just(number) =>
+            case {:split false} Just(number) =>
               {
                 clausesCount := number;
               }
@@ -1390,11 +1443,11 @@ module Useless {
           }
           var x := extractNumber();
           match x {
-            case Error(t) =>
+            case {:split false} Error(t) =>
               {
                 return Error(t);
               }
-            case Just(number) =>
+            case {:split false} Just(number) =>
               {
                 if number == 0 && clauseLength > 0 {
                   clauses := clauses + [clause[..clauseLength]];
@@ -1673,7 +1726,7 @@ trait DataStructures {
     reads `variablesCount
     decreases {this}, truthAssignment, literal
   {
-    var variable: Int32.t := Utils.abs(literal) - 1;
+    ghost var variable: Int32.t := Utils.abs(literal) - 1;
     if truthAssignment[variable] == -1 then
       -1
     else if literal < 0 then
@@ -1742,7 +1795,7 @@ trait DataStructures {
     if |truthAssignment| == 0 then
       0
     else
-      var ok: Int32.t := if truthAssignment[0] == -1 then 1 else 0; ok + countUnsetVariables(truthAssignment[1..])
+      ghost var ok: Int32.t := if truthAssignment[0] == -1 then 1 else 0; ok + countUnsetVariables(truthAssignment[1..])
   }
 
   function countTrueLiterals(truthAssignment: seq<Int32.t>, clause: seq<Int32.t>): Int32.t
@@ -1756,10 +1809,10 @@ trait DataStructures {
     if |clause| == 0 then
       0
     else
-      var ok: Int32.t := if getLiteralValue(truthAssignment, clause[0]) == 1 then 1 else 0; ok + countTrueLiterals(truthAssignment, clause[1..])
+      ghost var ok: Int32.t := if getLiteralValue(truthAssignment, clause[0]) == 1 then 1 else 0; ok + countTrueLiterals(truthAssignment, clause[1..])
   }
 
-  lemma /*{:_induction truthAssignment, clause}*/ prop_countTrueLiterals_initialTruthAssignment(truthAssignment: seq<Int32.t>, clause: seq<Int32.t>)
+  lemma /*{:_induction this, truthAssignment, clause}*/ prop_countTrueLiterals_initialTruthAssignment(truthAssignment: seq<Int32.t>, clause: seq<Int32.t>)
     requires validVariablesCount()
     requires validAssignmentTrace()
     requires validValuesTruthAssignment(truthAssignment)
@@ -1770,7 +1823,7 @@ trait DataStructures {
   {
   }
 
-  lemma /*{:_induction truthAssignment, clause}*/ countTrueLiterals0_noLiteralsTrue(truthAssignment: seq<Int32.t>, clause: seq<Int32.t>)
+  lemma /*{:_induction this, truthAssignment, clause}*/ countTrueLiterals0_noLiteralsTrue(truthAssignment: seq<Int32.t>, clause: seq<Int32.t>)
     requires validVariablesCount()
     requires validClause(clause)
     requires validValuesTruthAssignment(truthAssignment)
@@ -1780,7 +1833,7 @@ trait DataStructures {
   {
   }
 
-  lemma /*{:_induction truthAssignment, clause}*/ countTrueLiteralsX_existsTrueLiteral(truthAssignment: seq<Int32.t>, clause: seq<Int32.t>)
+  lemma /*{:_induction this, truthAssignment, clause}*/ countTrueLiteralsX_existsTrueLiteral(truthAssignment: seq<Int32.t>, clause: seq<Int32.t>)
     requires validVariablesCount()
     requires validClause(clause)
     requires validValuesTruthAssignment(truthAssignment)
@@ -1805,8 +1858,8 @@ trait DataStructures {
 
   function countFalseLiterals(truthAssignment: seq<Int32.t>, clause: seq<Int32.t>): Int32.t
     requires validVariablesCount()
-    requires validClause(clause)
     requires validValuesTruthAssignment(truthAssignment)
+    requires validClause(clause)
     reads `variablesCount, `clauseLength, clauseLength
     ensures 0 <= countFalseLiterals(truthAssignment, clause) as int <= |clause|
     decreases {this, this, clauseLength}, truthAssignment, clause
@@ -1814,10 +1867,10 @@ trait DataStructures {
     if |clause| == 0 then
       0
     else
-      var ok: Int32.t := if getLiteralValue(truthAssignment, clause[0]) == 0 then 1 else 0; ok + countFalseLiterals(truthAssignment, clause[1..])
+      ghost var ok: Int32.t := if getLiteralValue(truthAssignment, clause[0]) == 0 then 1 else 0; ok + countFalseLiterals(truthAssignment, clause[1..])
   }
 
-  lemma /*{:_induction truthAssignment, clause}*/ prop_countFalseLiterals_initialTruthAssignment(truthAssignment: seq<Int32.t>, clause: seq<Int32.t>)
+  lemma /*{:_induction this, truthAssignment, clause}*/ prop_countFalseLiterals_initialTruthAssignment(truthAssignment: seq<Int32.t>, clause: seq<Int32.t>)
     requires validVariablesCount()
     requires validValuesTruthAssignment(truthAssignment)
     requires validClause(clause)
@@ -1947,7 +2000,7 @@ trait DataStructures {
       |clauses[clauseIndex - 1]| + countLiterals(clauseIndex - 1)
   }
 
-  lemma /*{:_induction cI}*/ countLiterals_monotone(cI: Int32.t)
+  lemma /*{:_induction this, cI}*/ countLiterals_monotone(cI: Int32.t)
     requires validVariablesCount()
     requires validClauses()
     requires countLiterals(clausesCount) < Int32.max as int
@@ -1957,7 +2010,7 @@ trait DataStructures {
   {
   }
 
-  lemma /*{:_induction oldTau, newTau}*/ clausesNotImpacted_TFArraysSame(oldTau: seq<Int32.t>, newTau: seq<Int32.t>, variable: Int32.t, impactedClauses: seq<Int32.t>, impactedClauses': seq<Int32.t>)
+  lemma /*{:_induction this, oldTau, newTau}*/ clausesNotImpacted_TFArraysSame(oldTau: seq<Int32.t>, newTau: seq<Int32.t>, variable: Int32.t, impactedClauses: seq<Int32.t>, impactedClauses': seq<Int32.t>)
     requires validVariablesCount()
     requires validValuesTruthAssignment(oldTau)
     requires validValuesTruthAssignment(newTau)
@@ -1979,7 +2032,7 @@ trait DataStructures {
   {
   }
 
-  lemma /*{:_induction oldTau, newTau, clause}*/ setVariable_countTrueLiteralsIncreasesWithOne(oldTau: seq<Int32.t>, newTau: seq<Int32.t>, variable: Int32.t, clause: seq<Int32.t>)
+  lemma /*{:_induction this, oldTau, newTau, clause}*/ setVariable_countTrueLiteralsIncreasesWithOne(oldTau: seq<Int32.t>, newTau: seq<Int32.t>, variable: Int32.t, clause: seq<Int32.t>)
     requires validVariablesCount()
     requires validValuesTruthAssignment(oldTau)
     requires validValuesTruthAssignment(newTau)
@@ -1996,7 +2049,7 @@ trait DataStructures {
   {
   }
 
-  lemma /*{:_induction oldTau, newTau, clause}*/ setVariable_countFalseLiteralsIncreasesWithOne(oldTau: seq<Int32.t>, newTau: seq<Int32.t>, variable: Int32.t, clause: seq<Int32.t>)
+  lemma /*{:_induction this, oldTau, newTau, clause}*/ setVariable_countFalseLiteralsIncreasesWithOne(oldTau: seq<Int32.t>, newTau: seq<Int32.t>, variable: Int32.t, clause: seq<Int32.t>)
     requires validVariablesCount()
     requires validValuesTruthAssignment(oldTau)
     requires validValuesTruthAssignment(newTau)
@@ -2013,7 +2066,7 @@ trait DataStructures {
   {
   }
 
-  lemma /*{:_induction oldTau, clause}*/ literalTrue_countTrueLiteralsAtLeastOne(oldTau: seq<Int32.t>, variable: Int32.t, clause: seq<Int32.t>)
+  lemma /*{:_induction this, oldTau, clause}*/ literalTrue_countTrueLiteralsAtLeastOne(oldTau: seq<Int32.t>, variable: Int32.t, clause: seq<Int32.t>)
     requires validVariablesCount()
     requires validValuesTruthAssignment(oldTau)
     requires validVariable(variable)
@@ -2026,7 +2079,7 @@ trait DataStructures {
   {
   }
 
-  lemma /*{:_induction oldTau, newTau, clause}*/ unsetVariable_countTrueLiteralsDecreasesWithOne(oldTau: seq<Int32.t>, newTau: seq<Int32.t>, variable: Int32.t, clause: seq<Int32.t>)
+  lemma /*{:_induction this, oldTau, newTau, clause}*/ unsetVariable_countTrueLiteralsDecreasesWithOne(oldTau: seq<Int32.t>, newTau: seq<Int32.t>, variable: Int32.t, clause: seq<Int32.t>)
     requires validVariablesCount()
     requires validValuesTruthAssignment(oldTau)
     requires validValuesTruthAssignment(newTau)
@@ -2042,7 +2095,7 @@ trait DataStructures {
   {
   }
 
-  lemma /*{:_induction oldTau, newTau, clause}*/ unsetVariable_countFalseLiteralsDecreasesWithOne(oldTau: seq<Int32.t>, newTau: seq<Int32.t>, variable: Int32.t, clause: seq<Int32.t>)
+  lemma /*{:_induction this, oldTau, newTau, clause}*/ unsetVariable_countFalseLiteralsDecreasesWithOne(oldTau: seq<Int32.t>, newTau: seq<Int32.t>, variable: Int32.t, clause: seq<Int32.t>)
     requires validVariablesCount()
     requires validValuesTruthAssignment(oldTau)
     requires validValuesTruthAssignment(newTau)
@@ -2058,7 +2111,7 @@ trait DataStructures {
   {
   }
 
-  lemma /*{:_induction oldTau, newTau}*/ undoImpactedClauses_TFSArraysModified(oldTau: seq<Int32.t>, newTau: seq<Int32.t>, variable: Int32.t, impactedClauses: seq<Int32.t>, impactedClauses': seq<Int32.t>)
+  lemma /*{:_induction this, oldTau, newTau}*/ undoImpactedClauses_TFSArraysModified(oldTau: seq<Int32.t>, newTau: seq<Int32.t>, variable: Int32.t, impactedClauses: seq<Int32.t>, impactedClauses': seq<Int32.t>)
     requires validVariablesCount()
     requires validValuesTruthAssignment(oldTau)
     requires validValuesTruthAssignment(newTau)
@@ -2082,7 +2135,7 @@ trait DataStructures {
   {
   }
 
-  lemma notDone_literalsToSet(i: Int32.t)
+  lemma /*{:_induction this}*/ notDone_literalsToSet(i: Int32.t)
     requires valid()
     requires 0 <= i as int < |clauses|
     requires falseLiteralsCount[i] as int < |clauses[i]|
@@ -2094,7 +2147,7 @@ trait DataStructures {
   {
   }
 
-  lemma /*{:_induction oldTau, newTau}*/ setVariable_unsetVariablesDecreasesWithOne(oldTau: seq<Int32.t>, newTau: seq<Int32.t>, variable: Int32.t)
+  lemma /*{:_induction this, oldTau, newTau}*/ setVariable_unsetVariablesDecreasesWithOne(oldTau: seq<Int32.t>, newTau: seq<Int32.t>, variable: Int32.t)
     requires validVariablesCount()
     requires validVariable(variable)
     requires validValuesTruthAssignment(oldTau)
@@ -2161,10 +2214,10 @@ trait DataStructures {
     requires validValuesTruthAssignment(tau)
     requires isSatisfiableExtend(tau)
     reads `variablesCount, `clauses, `clausesCount, `clauseLength, clauseLength
-    ensures var tau': seq<Int32.t> := getExtendedCompleteTau(tau); validValuesTruthAssignment(tau') && isTauComplete(tau') && isExtendingTau(tau, tau') && isSatisfied(tau')
+    ensures ghost var tau': seq<Int32.t> := getExtendedCompleteTau(tau); validValuesTruthAssignment(tau') && isTauComplete(tau') && isExtendingTau(tau, tau') && isSatisfied(tau')
     decreases {this, this, this, this, clauseLength}, tau
   {
-    var tau': seq<Int32.t> :| validValuesTruthAssignment(tau') && isTauComplete(tau') && isExtendingTau(tau, tau') && isSatisfied(tau');
+    ghost var tau': seq<Int32.t> :| validValuesTruthAssignment(tau') && isTauComplete(tau') && isExtendingTau(tau, tau') && isSatisfied(tau');
     tau'
   }
 
@@ -2214,7 +2267,7 @@ trait DataStructures {
 
 module Utils {
 
-  import Int32 = Int32
+  import Int32
   method newInitializedSeq(n: Int32.t, d: Int32.t) returns (r: array<Int32.t>)
     requires 0 < n
     ensures r.Length == n as int
@@ -2296,6 +2349,13 @@ module Utils {
 }
 ")]
 
+//-----------------------------------------------------------------------------
+//
+// Copyright by the contributors to the Dafny Project
+// SPDX-License-Identifier: MIT
+//
+//-----------------------------------------------------------------------------
+
 #if ISDAFNYRUNTIMELIB
 using System; // for Func
 using System.Numerics;
@@ -2309,28 +2369,44 @@ namespace DafnyAssembly {
   }
 }
 
-namespace Dafny
-{
+namespace Dafny {
   using System.Collections.Generic;
-  // set this option if you want to use System.Collections.Immutable and if you know what you're doing.
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
   using System.Collections.Immutable;
   using System.Linq;
-#endif
 
-  public class Set<T>
-  {
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
+  public interface ISet<out T> {
+    int Count { get; }
+    long LongCount { get; }
+    IEnumerable<T> Elements { get; }
+    IEnumerable<ISet<T>> AllSubsets { get; }
+    bool Contains<G>(G t);
+    bool EqualsAux(ISet<object> other);
+    ISet<U> DowncastClone<U>(Func<T, U> converter);
+  }
+
+  public class Set<T> : ISet<T> {
     readonly ImmutableHashSet<T> setImpl;
     readonly bool containsNull;
     Set(ImmutableHashSet<T> d, bool containsNull) {
       this.setImpl = d;
       this.containsNull = containsNull;
     }
-    public static readonly Set<T> Empty = new Set<T>(ImmutableHashSet<T>.Empty, false);
-    public static Set<T> FromElements(params T[] values) {
+
+    public static readonly ISet<T> Empty = new Set<T>(ImmutableHashSet<T>.Empty, false);
+
+    private static readonly TypeDescriptor<ISet<T>> _TYPE = new Dafny.TypeDescriptor<ISet<T>>(Empty);
+    public static TypeDescriptor<ISet<T>> _TypeDescriptor() {
+      return _TYPE;
+    }
+
+    public static ISet<T> FromElements(params T[] values) {
       return FromCollection(values);
     }
+
+    public static Set<T> FromISet(ISet<T> s) {
+      return s as Set<T> ?? FromCollection(s.Elements);
+    }
+
     public static Set<T> FromCollection(IEnumerable<T> values) {
       var d = ImmutableHashSet<T>.Empty.ToBuilder();
       var containsNull = false;
@@ -2341,9 +2417,11 @@ namespace Dafny
           d.Add(t);
         }
       }
+
       return new Set<T>(d.ToImmutable(), containsNull);
     }
-    public static Set<T> FromCollectionPlusOne(IEnumerable<T> values, T oneMoreValue) {
+
+    public static ISet<T> FromCollectionPlusOne(IEnumerable<T> values, T oneMoreValue) {
       var d = ImmutableHashSet<T>.Empty.ToBuilder();
       var containsNull = false;
       if (oneMoreValue == null) {
@@ -2351,6 +2429,7 @@ namespace Dafny
       } else {
         d.Add(oneMoreValue);
       }
+
       foreach (T t in values) {
         if (t == null) {
           containsNull = true;
@@ -2358,357 +2437,343 @@ namespace Dafny
           d.Add(t);
         }
       }
+
       return new Set<T>(d.ToImmutable(), containsNull);
     }
+
+    public ISet<U> DowncastClone<U>(Func<T, U> converter) {
+      if (this is ISet<U> th) {
+        return th;
+      } else {
+        var d = ImmutableHashSet<U>.Empty.ToBuilder();
+        foreach (var t in this.setImpl) {
+          var u = converter(t);
+          d.Add(u);
+        }
+
+        return new Set<U>(d.ToImmutable(), this.containsNull);
+      }
+    }
+
     public int Count {
       get { return this.setImpl.Count + (containsNull ? 1 : 0); }
     }
+
     public long LongCount {
       get { return this.setImpl.Count + (containsNull ? 1 : 0); }
     }
+
     public IEnumerable<T> Elements {
       get {
         if (containsNull) {
           yield return default(T);
         }
+
         foreach (var t in this.setImpl) {
           yield return t;
         }
       }
     }
-#else
-    readonly HashSet<T> setImpl;
-    Set(HashSet<T> s) {
-      this.setImpl = s;
-    }
-    public static readonly Set<T> Empty = new Set<T>(new HashSet<T>());
-    public static Set<T> FromElements(params T[] values) {
-      return FromCollection(values);
-    }
-    public static Set<T> FromCollection(IEnumerable<T> values) {
-      var s = new HashSet<T>(values);
-      return new Set<T>(s);
-    }
-    public static Set<T> FromCollectionPlusOne(IEnumerable<T> values, T oneMoreValue) {
-      var s = new HashSet<T>(values);
-      s.Add(oneMoreValue);
-      return new Set<T>(s);
-    }
-    public int Count {
-      get { return this.setImpl.Count; }
-    }
-    public long LongCount {
-      get { return this.setImpl.Count; }
-    }
-    public IEnumerable<T> Elements {
-      get {
-        return this.setImpl;
-      }
-    }
-#endif
-
-    public static Set<T> _DafnyDefaultValue() {
-      return Empty;
-    }
 
     /// <summary>
     /// This is an inefficient iterator for producing all subsets of "this".
     /// </summary>
-    public IEnumerable<Set<T>> AllSubsets {
+    public IEnumerable<ISet<T>> AllSubsets {
       get {
         // Start by putting all set elements into a list, but don't include null
         var elmts = new List<T>();
         elmts.AddRange(this.setImpl);
         var n = elmts.Count;
         var which = new bool[n];
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
         var s = ImmutableHashSet<T>.Empty.ToBuilder();
-#else
-        var s = new HashSet<T>();
-#endif
         while (true) {
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
           // yield both the subset without null and, if null is in the original set, the subset with null included
           var ihs = s.ToImmutable();
           yield return new Set<T>(ihs, false);
           if (containsNull) {
             yield return new Set<T>(ihs, true);
           }
-#else
-          yield return new Set<T>(new HashSet<T>(s));
-#endif
+
           // "add 1" to "which", as if doing a carry chain.  For every digit changed, change the membership of the corresponding element in "s".
           int i = 0;
           for (; i < n && which[i]; i++) {
             which[i] = false;
             s.Remove(elmts[i]);
           }
+
           if (i == n) {
             // we have cycled through all the subsets
             break;
           }
+
           which[i] = true;
           s.Add(elmts[i]);
         }
       }
     }
-    public bool Equals(Set<T> other) {
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-      return containsNull == other.containsNull && this.setImpl.SetEquals(other.setImpl);
-#else
-      return this.setImpl.Count == other.setImpl.Count && IsSubsetOf(other);
-#endif
+
+    public bool Equals(ISet<T> other) {
+      if (other == null || Count != other.Count) {
+        return false;
+      } else if (this == other) {
+        return true;
+      }
+
+      foreach (var elmt in Elements) {
+        if (!other.Contains(elmt)) {
+          return false;
+        }
+      }
+
+      return true;
     }
+
     public override bool Equals(object other) {
-      return other is Set<T> && Equals((Set<T>)other);
+      if (other is ISet<T>) {
+        return Equals((ISet<T>)other);
+      }
+
+      var th = this as ISet<object>;
+      var oth = other as ISet<object>;
+      if (th != null && oth != null) {
+        // We'd like to obtain the more specific type parameter U for oth's type ISet<U>.
+        // We do that by making a dynamically dispatched call, like:
+        //     oth.Equals(this)
+        // The hope is then that its comparison "this is ISet<U>" (that is, the first "if" test
+        // above, but in the call "oth.Equals(this)") will be true and the non-virtual Equals
+        // can be called. However, such a recursive call to "oth.Equals(this)" could turn
+        // into infinite recursion. Therefore, we instead call "oth.EqualsAux(this)", which
+        // performs the desired type test, but doesn't recurse any further.
+        return oth.EqualsAux(th);
+      } else {
+        return false;
+      }
     }
+
+    public bool EqualsAux(ISet<object> other) {
+      var s = other as ISet<T>;
+      if (s != null) {
+        return Equals(s);
+      } else {
+        return false;
+      }
+    }
+
     public override int GetHashCode() {
       var hashCode = 1;
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
       if (containsNull) {
         hashCode = hashCode * (Dafny.Helpers.GetHashCode(default(T)) + 3);
       }
-#endif
+
       foreach (var t in this.setImpl) {
-        hashCode = hashCode * (Dafny.Helpers.GetHashCode(t)+3);
+        hashCode = hashCode * (Dafny.Helpers.GetHashCode(t) + 3);
       }
+
       return hashCode;
     }
+
     public override string ToString() {
       var s = "{";
       var sep = "";
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
       if (containsNull) {
         s += sep + Dafny.Helpers.ToString(default(T));
         sep = ", ";
       }
-#endif
+
       foreach (var t in this.setImpl) {
         s += sep + Dafny.Helpers.ToString(t);
         sep = ", ";
       }
+
       return s + "}";
     }
-    public bool IsProperSubsetOf(Set<T> other) {
-      return this.Count < other.Count && IsSubsetOf(other);
+    public static bool IsProperSubsetOf(ISet<T> th, ISet<T> other) {
+      return th.Count < other.Count && IsSubsetOf(th, other);
     }
-    public bool IsSubsetOf(Set<T> other) {
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-      if (this.containsNull && !other.containsNull) {
+    public static bool IsSubsetOf(ISet<T> th, ISet<T> other) {
+      if (other.Count < th.Count) {
         return false;
       }
-#endif
-      if (other.setImpl.Count < this.setImpl.Count)
-        return false;
-      foreach (T t in this.setImpl) {
-        if (!other.setImpl.Contains(t))
+      foreach (T t in th.Elements) {
+        if (!other.Contains(t)) {
           return false;
+        }
       }
       return true;
     }
-    public bool IsSupersetOf(Set<T> other) {
-      return other.IsSubsetOf(this);
-    }
-    public bool IsProperSupersetOf(Set<T> other) {
-      return other.IsProperSubsetOf(this);
-    }
-    public bool IsDisjointFrom(Set<T> other) {
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-      if (this.containsNull && other.containsNull) {
-        return false;
-      }
-      ImmutableHashSet<T> a, b;
-#else
-      HashSet<T> a, b;
-#endif
-      if (this.setImpl.Count < other.setImpl.Count) {
-        a = this.setImpl; b = other.setImpl;
+    public static bool IsDisjointFrom(ISet<T> th, ISet<T> other) {
+      ISet<T> a, b;
+      if (th.Count < other.Count) {
+        a = th; b = other;
       } else {
-        a = other.setImpl; b = this.setImpl;
+        a = other; b = th;
       }
-      foreach (T t in a) {
-        if (b.Contains(t))
+      foreach (T t in a.Elements) {
+        if (b.Contains(t)) {
           return false;
+        }
       }
       return true;
     }
     public bool Contains<G>(G t) {
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
       return t == null ? containsNull : t is T && this.setImpl.Contains((T)(object)t);
-#else
-      return (t == null || t is T) && this.setImpl.Contains((T)(object)t);
-#endif
     }
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-    public Set<T> Union(Set<T> other) {
-      return new Set<T>(this.setImpl.Union(other.setImpl), containsNull || other.containsNull);
+    public static ISet<T> Union(ISet<T> th, ISet<T> other) {
+      var a = FromISet(th);
+      var b = FromISet(other);
+      return new Set<T>(a.setImpl.Union(b.setImpl), a.containsNull || b.containsNull);
     }
-    public Set<T> Intersect(Set<T> other) {
-      return new Set<T>(this.setImpl.Intersect(other.setImpl), containsNull && other.containsNull);
+    public static ISet<T> Intersect(ISet<T> th, ISet<T> other) {
+      var a = FromISet(th);
+      var b = FromISet(other);
+      return new Set<T>(a.setImpl.Intersect(b.setImpl), a.containsNull && b.containsNull);
     }
-    public Set<T> Difference(Set<T> other) {
-        return new Set<T>(this.setImpl.Except(other.setImpl), containsNull && !other.containsNull);
+    public static ISet<T> Difference(ISet<T> th, ISet<T> other) {
+      var a = FromISet(th);
+      var b = FromISet(other);
+      return new Set<T>(a.setImpl.Except(b.setImpl), a.containsNull && !b.containsNull);
     }
-#else
-    public Set<T> Union(Set<T> other) {
-      if (this.setImpl.Count == 0)
-        return other;
-      else if (other.setImpl.Count == 0)
-        return this;
-      HashSet<T> a, b;
-      if (this.setImpl.Count < other.setImpl.Count) {
-        a = this.setImpl; b = other.setImpl;
-      } else {
-        a = other.setImpl; b = this.setImpl;
-      }
-      var r = new HashSet<T>();
-      foreach (T t in b)
-        r.Add(t);
-      foreach (T t in a)
-        r.Add(t);
-      return new Set<T>(r);
-    }
-    public Set<T> Intersect(Set<T> other) {
-      if (this.setImpl.Count == 0)
-        return this;
-      else if (other.setImpl.Count == 0)
-        return other;
-      HashSet<T> a, b;
-      if (this.setImpl.Count < other.setImpl.Count) {
-        a = this.setImpl; b = other.setImpl;
-      } else {
-        a = other.setImpl; b = this.setImpl;
-      }
-      var r = new HashSet<T>();
-      foreach (T t in a) {
-        if (b.Contains(t))
-          r.Add(t);
-      }
-      return new Set<T>(r);
-    }
-    public Set<T> Difference(Set<T> other) {
-      if (this.setImpl.Count == 0)
-        return this;
-      else if (other.setImpl.Count == 0)
-        return this;
-      var r = new HashSet<T>();
-      foreach (T t in this.setImpl) {
-        if (!other.setImpl.Contains(t))
-          r.Add(t);
-      }
-      return new Set<T>(r);
-    }
-#endif
   }
 
-  public class MultiSet<T>
-  {
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-    readonly ImmutableDictionary<T, int> dict;
-#else
-    readonly Dictionary<T, int> dict;
-#endif
+  public interface IMultiSet<out T> {
+    bool IsEmpty { get; }
+    int Count { get; }
+    long LongCount { get; }
+    IEnumerable<T> Elements { get; }
+    IEnumerable<T> UniqueElements { get; }
+    bool Contains<G>(G t);
+    BigInteger Select<G>(G t);
+    IMultiSet<T> Update<G>(G t, BigInteger i);
+    bool EqualsAux(IMultiSet<object> other);
+    IMultiSet<U> DowncastClone<U>(Func<T, U> converter);
+  }
+
+  public class MultiSet<T> : IMultiSet<T> {
+    readonly ImmutableDictionary<T, BigInteger> dict;
     readonly BigInteger occurrencesOfNull;  // stupidly, a Dictionary in .NET cannot use "null" as a key
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-    MultiSet(ImmutableDictionary<T, int>.Builder d, BigInteger occurrencesOfNull) {
+    MultiSet(ImmutableDictionary<T, BigInteger>.Builder d, BigInteger occurrencesOfNull) {
       dict = d.ToImmutable();
       this.occurrencesOfNull = occurrencesOfNull;
     }
-    public static readonly MultiSet<T> Empty = new MultiSet<T>(ImmutableDictionary<T, int>.Empty.ToBuilder(), BigInteger.Zero);
-#else
-    MultiSet(Dictionary<T, int> d, BigInteger occurrencesOfNull) {
-      this.dict = d;
-      this.occurrencesOfNull = occurrencesOfNull;
+    public static readonly MultiSet<T> Empty = new MultiSet<T>(ImmutableDictionary<T, BigInteger>.Empty.ToBuilder(), BigInteger.Zero);
+
+    private static readonly TypeDescriptor<IMultiSet<T>> _TYPE = new Dafny.TypeDescriptor<IMultiSet<T>>(Empty);
+    public static TypeDescriptor<IMultiSet<T>> _TypeDescriptor() {
+      return _TYPE;
     }
-    public static MultiSet<T> Empty = new MultiSet<T>(new Dictionary<T, int>(0), BigInteger.Zero);
-#endif
+
+    public static MultiSet<T> FromIMultiSet(IMultiSet<T> s) {
+      return s as MultiSet<T> ?? FromCollection(s.Elements);
+    }
     public static MultiSet<T> FromElements(params T[] values) {
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-      var d = ImmutableDictionary<T, int>.Empty.ToBuilder();
-#else
-      var d = new Dictionary<T, int>(values.Length);
-#endif
+      var d = ImmutableDictionary<T, BigInteger>.Empty.ToBuilder();
       var occurrencesOfNull = BigInteger.Zero;
       foreach (T t in values) {
         if (t == null) {
           occurrencesOfNull++;
         } else {
-          var i = 0;
+          BigInteger i;
           if (!d.TryGetValue(t, out i)) {
-            i = 0;
+            i = BigInteger.Zero;
           }
           d[t] = i + 1;
         }
       }
       return new MultiSet<T>(d, occurrencesOfNull);
     }
-    public static MultiSet<T> FromCollection(ICollection<T> values) {
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-      var d = ImmutableDictionary<T, int>.Empty.ToBuilder();
-#else
-      var d = new Dictionary<T, int>();
-#endif
+
+    public static MultiSet<T> FromCollection(IEnumerable<T> values) {
+      var d = ImmutableDictionary<T, BigInteger>.Empty.ToBuilder();
       var occurrencesOfNull = BigInteger.Zero;
       foreach (T t in values) {
         if (t == null) {
           occurrencesOfNull++;
         } else {
-          var i = 0;
-          if (!d.TryGetValue(t, out i)) {
-            i = 0;
+          BigInteger i;
+          if (!d.TryGetValue(t,
+            out i)) {
+            i = BigInteger.Zero;
           }
+
           d[t] = i + 1;
         }
       }
-      return new MultiSet<T>(d, occurrencesOfNull);
+
+      return new MultiSet<T>(d,
+        occurrencesOfNull);
     }
-    public static MultiSet<T> FromSeq(Sequence<T> values) {
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-      var d = ImmutableDictionary<T, int>.Empty.ToBuilder();
-#else
-      var d = new Dictionary<T, int>();
-#endif
+
+    public static MultiSet<T> FromSeq(ISequence<T> values) {
+      var d = ImmutableDictionary<T, BigInteger>.Empty.ToBuilder();
       var occurrencesOfNull = BigInteger.Zero;
       foreach (T t in values.Elements) {
         if (t == null) {
           occurrencesOfNull++;
         } else {
-          var i = 0;
-          if (!d.TryGetValue(t, out i)) {
-            i = 0;
+          BigInteger i;
+          if (!d.TryGetValue(t,
+            out i)) {
+            i = BigInteger.Zero;
           }
+
           d[t] = i + 1;
         }
       }
-      return new MultiSet<T>(d, occurrencesOfNull);
+
+      return new MultiSet<T>(d,
+        occurrencesOfNull);
     }
-    public static MultiSet<T> FromSet(Set<T> values) {
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-      var d = ImmutableDictionary<T, int>.Empty.ToBuilder();
-#else
-      var d = new Dictionary<T, int>();
-#endif
+    public static MultiSet<T> FromSet(ISet<T> values) {
+      var d = ImmutableDictionary<T, BigInteger>.Empty.ToBuilder();
       var containsNull = false;
       foreach (T t in values.Elements) {
         if (t == null) {
           containsNull = true;
         } else {
-          d[t] = 1;
+          d[t] = BigInteger.One;
         }
       }
       return new MultiSet<T>(d, containsNull ? BigInteger.One : BigInteger.Zero);
     }
-
-    public static MultiSet<T> _DafnyDefaultValue() {
-      return Empty;
+    public IMultiSet<U> DowncastClone<U>(Func<T, U> converter) {
+      if (this is IMultiSet<U> th) {
+        return th;
+      } else {
+        var d = ImmutableDictionary<U, BigInteger>.Empty.ToBuilder();
+        foreach (var item in this.dict) {
+          var k = converter(item.Key);
+          d.Add(k, item.Value);
+        }
+        return new MultiSet<U>(d, this.occurrencesOfNull);
+      }
     }
 
-    public bool Equals(MultiSet<T> other) {
-      return other.IsSubsetOf(this) && this.IsSubsetOf(other);
+    public bool Equals(IMultiSet<T> other) {
+      return IsSubsetOf(this, other) && IsSubsetOf(other, this);
     }
     public override bool Equals(object other) {
-      return other is MultiSet<T> && Equals((MultiSet<T>)other);
+      if (other is IMultiSet<T>) {
+        return Equals((IMultiSet<T>)other);
+      }
+      var th = this as IMultiSet<object>;
+      var oth = other as IMultiSet<object>;
+      if (th != null && oth != null) {
+        // See comment in Set.Equals
+        return oth.EqualsAux(th);
+      } else {
+        return false;
+      }
     }
+
+    public bool EqualsAux(IMultiSet<object> other) {
+      var s = other as IMultiSet<T>;
+      if (s != null) {
+        return Equals(s);
+      } else {
+        return false;
+      }
+    }
+
     public override int GetHashCode() {
       var hashCode = 1;
       if (occurrencesOfNull > 0) {
@@ -2732,141 +2797,129 @@ namespace Dafny
       }
       foreach (var kv in dict) {
         var t = Dafny.Helpers.ToString(kv.Key);
-        for (int i = 0; i < kv.Value; i++) {
+        for (var i = BigInteger.Zero; i < kv.Value; i++) {
           s += sep + t;
           sep = ", ";
         }
       }
       return s + "}";
     }
-    public bool IsProperSubsetOf(MultiSet<T> other) {
-      return !Equals(other) && IsSubsetOf(other);
+    public static bool IsProperSubsetOf(IMultiSet<T> th, IMultiSet<T> other) {
+      return th.Count < other.Count && IsSubsetOf(th, other);
     }
-    public bool IsSubsetOf(MultiSet<T> other) {
-      if (other.occurrencesOfNull < this.occurrencesOfNull) {
+    public static bool IsSubsetOf(IMultiSet<T> th, IMultiSet<T> other) {
+      var a = FromIMultiSet(th);
+      var b = FromIMultiSet(other);
+      if (b.occurrencesOfNull < a.occurrencesOfNull) {
         return false;
       }
-      foreach (T t in dict.Keys) {
-        if (!other.dict.ContainsKey(t) || other.dict[t] < dict[t])
-          return false;
+      foreach (T t in a.dict.Keys) {
+        if (b.dict.ContainsKey(t)) {
+          if (b.dict[t] < a.dict[t]) {
+            return false;
+          }
+        } else {
+          if (a.dict[t] != BigInteger.Zero) {
+            return false;
+          }
+        }
       }
       return true;
     }
-    public bool IsSupersetOf(MultiSet<T> other) {
-      return other.IsSubsetOf(this);
-    }
-    public bool IsProperSupersetOf(MultiSet<T> other) {
-      return other.IsProperSubsetOf(this);
-    }
-    public bool IsDisjointFrom(MultiSet<T> other) {
-      if (occurrencesOfNull > 0 && other.occurrencesOfNull > 0) {
-        return false;
-      }
-      foreach (T t in dict.Keys) {
-        if (other.dict.ContainsKey(t))
+    public static bool IsDisjointFrom(IMultiSet<T> th, IMultiSet<T> other) {
+      foreach (T t in th.UniqueElements) {
+        if (other.Contains(t)) {
           return false;
-      }
-      foreach (T t in other.dict.Keys) {
-        if (dict.ContainsKey(t))
-          return false;
+        }
       }
       return true;
     }
 
     public bool Contains<G>(G t) {
-      return t == null ? occurrencesOfNull > 0 : t is T && dict.ContainsKey((T)(object)t);
+      return Select(t) != 0;
     }
     public BigInteger Select<G>(G t) {
       if (t == null) {
         return occurrencesOfNull;
-      } else if (t is T && dict.ContainsKey((T)(object)t)) {
-        return dict[(T)(object)t];
+      }
+      BigInteger m;
+      if (t is T && dict.TryGetValue((T)(object)t, out m)) {
+        return m;
       } else {
         return BigInteger.Zero;
       }
     }
-    public MultiSet<T> Update<G>(G t, BigInteger i) {
+    public IMultiSet<T> Update<G>(G t, BigInteger i) {
       if (Select(t) == i) {
         return this;
       } else if (t == null) {
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
         var r = dict.ToBuilder();
-#else
-        var r = dict;
-#endif
         return new MultiSet<T>(r, i);
       } else {
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
         var r = dict.ToBuilder();
-#else
-        var r = new Dictionary<T, int>(dict);
-#endif
-        r[(T)(object)t] = (int)i;
+        r[(T)(object)t] = i;
         return new MultiSet<T>(r, occurrencesOfNull);
       }
     }
-    public MultiSet<T> Union(MultiSet<T> other) {
-      if (dict.Count + occurrencesOfNull == 0)
+    public static IMultiSet<T> Union(IMultiSet<T> th, IMultiSet<T> other) {
+      if (th.IsEmpty) {
         return other;
-      else if (other.dict.Count + other.occurrencesOfNull == 0)
-        return this;
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-      var r = ImmutableDictionary<T, int>.Empty.ToBuilder();
-#else
-      var r = new Dictionary<T, int>();
-#endif
-      foreach (T t in dict.Keys) {
-        var i = 0;
-        if (!r.TryGetValue(t, out i)) {
-          i = 0;
-        }
-        r[t] = i + dict[t];
+      } else if (other.IsEmpty) {
+        return th;
       }
-      foreach (T t in other.dict.Keys) {
-        var i = 0;
+      var a = FromIMultiSet(th);
+      var b = FromIMultiSet(other);
+      var r = ImmutableDictionary<T, BigInteger>.Empty.ToBuilder();
+      foreach (T t in a.dict.Keys) {
+        BigInteger i;
         if (!r.TryGetValue(t, out i)) {
-          i = 0;
+          i = BigInteger.Zero;
         }
-        r[t] = i + other.dict[t];
+        r[t] = i + a.dict[t];
       }
-      return new MultiSet<T>(r, occurrencesOfNull + other.occurrencesOfNull);
+      foreach (T t in b.dict.Keys) {
+        BigInteger i;
+        if (!r.TryGetValue(t, out i)) {
+          i = BigInteger.Zero;
+        }
+        r[t] = i + b.dict[t];
+      }
+      return new MultiSet<T>(r, a.occurrencesOfNull + b.occurrencesOfNull);
     }
-    public MultiSet<T> Intersect(MultiSet<T> other) {
-      if (dict.Count == 0 && occurrencesOfNull == 0)
-        return this;
-      else if (other.dict.Count == 0 && other.occurrencesOfNull == 0)
+    public static IMultiSet<T> Intersect(IMultiSet<T> th, IMultiSet<T> other) {
+      if (th.IsEmpty) {
+        return th;
+      } else if (other.IsEmpty) {
         return other;
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-      var r = ImmutableDictionary<T, int>.Empty.ToBuilder();
-#else
-      var r = new Dictionary<T, int>();
-#endif
-      foreach (T t in dict.Keys) {
-        if (other.dict.ContainsKey(t)) {
-          r.Add(t, other.dict[t] < dict[t] ? other.dict[t] : dict[t]);
+      }
+      var a = FromIMultiSet(th);
+      var b = FromIMultiSet(other);
+      var r = ImmutableDictionary<T, BigInteger>.Empty.ToBuilder();
+      foreach (T t in a.dict.Keys) {
+        if (b.dict.ContainsKey(t)) {
+          r.Add(t, a.dict[t] < b.dict[t] ? a.dict[t] : b.dict[t]);
         }
       }
-      return new MultiSet<T>(r, other.occurrencesOfNull < occurrencesOfNull ? other.occurrencesOfNull : occurrencesOfNull);
+      return new MultiSet<T>(r, a.occurrencesOfNull < b.occurrencesOfNull ? a.occurrencesOfNull : b.occurrencesOfNull);
     }
-    public MultiSet<T> Difference(MultiSet<T> other) { // \result == this - other
-      if (dict.Count == 0 && occurrencesOfNull == 0)
-        return this;
-      else if (other.dict.Count == 0 && other.occurrencesOfNull == 0)
-        return this;
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-      var r = ImmutableDictionary<T, int>.Empty.ToBuilder();
-#else
-      var r = new Dictionary<T, int>();
-#endif
-      foreach (T t in dict.Keys) {
-        if (!other.dict.ContainsKey(t)) {
-          r.Add(t, dict[t]);
-        } else if (other.dict[t] < dict[t]) {
-          r.Add(t, dict[t] - other.dict[t]);
+    public static IMultiSet<T> Difference(IMultiSet<T> th, IMultiSet<T> other) { // \result == this - other
+      if (other.IsEmpty) {
+        return th;
+      }
+      var a = FromIMultiSet(th);
+      var b = FromIMultiSet(other);
+      var r = ImmutableDictionary<T, BigInteger>.Empty.ToBuilder();
+      foreach (T t in a.dict.Keys) {
+        if (!b.dict.ContainsKey(t)) {
+          r.Add(t, a.dict[t]);
+        } else if (b.dict[t] < a.dict[t]) {
+          r.Add(t, a.dict[t] - b.dict[t]);
         }
       }
-      return new MultiSet<T>(r, other.occurrencesOfNull < occurrencesOfNull ? occurrencesOfNull - other.occurrencesOfNull : BigInteger.Zero);
+      return new MultiSet<T>(r, b.occurrencesOfNull < a.occurrencesOfNull ? a.occurrencesOfNull - b.occurrencesOfNull : BigInteger.Zero);
     }
+
+    public bool IsEmpty { get { return occurrencesOfNull == 0 && dict.IsEmpty; } }
 
     public int Count {
       get { return (int)ElementCount(); }
@@ -2889,7 +2942,7 @@ namespace Dafny
           yield return default(T);
         }
         foreach (var item in dict) {
-          for (int i = 0; i < item.Value; i++) {
+          for (var i = BigInteger.Zero; i < item.Value; i++) {
             yield return item.Key;
           }
         }
@@ -2901,109 +2954,157 @@ namespace Dafny
         if (!occurrencesOfNull.IsZero) {
           yield return default(T);
         }
-        foreach (var item in dict) {
-          yield return item.Key;
+        foreach (var key in dict.Keys) {
+          if (dict[key] != 0) {
+            yield return key;
+          }
         }
       }
     }
   }
 
-  public class Map<U, V>
-  {
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-    readonly ImmutableDictionary<U, V> dict;
-#else
-    readonly Dictionary<U, V> dict;
-#endif
-    readonly bool hasNullValue;  // true when "null" is a key of the Map
-    readonly V nullValue;  // if "hasNullValue", the value that "null" maps to
+  public interface IMap<out U, out V> {
+    int Count { get; }
+    long LongCount { get; }
+    ISet<U> Keys { get; }
+    ISet<V> Values { get; }
+    IEnumerable<IPair<U, V>> ItemEnumerable { get; }
+    bool Contains<G>(G t);
+    /// <summary>
+    /// Returns "true" iff "this is IMap<object, object>" and "this" equals "other".
+    /// </summary>
+    bool EqualsObjObj(IMap<object, object> other);
+    IMap<UU, VV> DowncastClone<UU, VV>(Func<U, UU> keyConverter, Func<V, VV> valueConverter);
+  }
 
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-    Map(ImmutableDictionary<U, V>.Builder d, bool hasNullValue, V nullValue) {
+  public class Map<U, V> : IMap<U, V> {
+    readonly ImmutableDictionary<U, V> dict;
+    readonly bool hasNullKey;  // true when "null" is a key of the Map
+    readonly V nullValue;  // if "hasNullKey", the value that "null" maps to
+
+    private Map(ImmutableDictionary<U, V>.Builder d, bool hasNullKey, V nullValue) {
       dict = d.ToImmutable();
-      this.hasNullValue = hasNullValue;
+      this.hasNullKey = hasNullKey;
       this.nullValue = nullValue;
     }
     public static readonly Map<U, V> Empty = new Map<U, V>(ImmutableDictionary<U, V>.Empty.ToBuilder(), false, default(V));
-#else
-    Map(Dictionary<U, V> d, bool hasNullValue, V nullValue) {
-      this.dict = d;
-      this.hasNullValue = hasNullValue;
+
+    private Map(ImmutableDictionary<U, V> d, bool hasNullKey, V nullValue) {
+      dict = d;
+      this.hasNullKey = hasNullKey;
       this.nullValue = nullValue;
     }
-    public static readonly Map<U, V> Empty = new Map<U, V>(new Dictionary<U, V>(), false, default(V));
-#endif
 
-    public static Map<U, V> FromElements(params Pair<U, V>[] values) {
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-      var d = ImmutableDictionary<U, V>.Empty.ToBuilder();
-#else
-      var d = new Dictionary<U, V>(values.Length);
-#endif
-      var hasNullValue = false;
-      var nullValue = default(V);
-      foreach (Pair<U, V> p in values) {
-        if (p.Car == null) {
-          hasNullValue = true;
-          nullValue = p.Cdr;
-        } else {
-          d[p.Car] = p.Cdr;
-        }
-      }
-      return new Map<U, V>(d, hasNullValue, nullValue);
+    private static readonly TypeDescriptor<IMap<U, V>> _TYPE = new Dafny.TypeDescriptor<IMap<U, V>>(Empty);
+    public static TypeDescriptor<IMap<U, V>> _TypeDescriptor() {
+      return _TYPE;
     }
-    public static Map<U, V> FromCollection(List<Pair<U, V>> values) {
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
+
+    public static Map<U, V> FromElements(params IPair<U, V>[] values) {
       var d = ImmutableDictionary<U, V>.Empty.ToBuilder();
-#else
-      var d = new Dictionary<U, V>(values.Count);
-#endif
-      var hasNullValue = false;
+      var hasNullKey = false;
       var nullValue = default(V);
-      foreach (Pair<U, V> p in values) {
+      foreach (var p in values) {
         if (p.Car == null) {
-          hasNullValue = true;
+          hasNullKey = true;
           nullValue = p.Cdr;
         } else {
           d[p.Car] = p.Cdr;
         }
       }
-      return new Map<U, V>(d, hasNullValue, nullValue);
+      return new Map<U, V>(d, hasNullKey, nullValue);
+    }
+    public static Map<U, V> FromCollection(IEnumerable<IPair<U, V>> values) {
+      var d = ImmutableDictionary<U, V>.Empty.ToBuilder();
+      var hasNullKey = false;
+      var nullValue = default(V);
+      foreach (var p in values) {
+        if (p.Car == null) {
+          hasNullKey = true;
+          nullValue = p.Cdr;
+        } else {
+          d[p.Car] = p.Cdr;
+        }
+      }
+      return new Map<U, V>(d, hasNullKey, nullValue);
+    }
+    public static Map<U, V> FromIMap(IMap<U, V> m) {
+      return m as Map<U, V> ?? FromCollection(m.ItemEnumerable);
+    }
+    public IMap<UU, VV> DowncastClone<UU, VV>(Func<U, UU> keyConverter, Func<V, VV> valueConverter) {
+      if (this is IMap<UU, VV> th) {
+        return th;
+      } else {
+        var d = ImmutableDictionary<UU, VV>.Empty.ToBuilder();
+        foreach (var item in this.dict) {
+          var k = keyConverter(item.Key);
+          var v = valueConverter(item.Value);
+          d.Add(k, v);
+        }
+        return new Map<UU, VV>(d, this.hasNullKey, (VV)(object)this.nullValue);
+      }
     }
     public int Count {
-      get { return dict.Count + (hasNullValue ? 1 : 0); }
+      get { return dict.Count + (hasNullKey ? 1 : 0); }
     }
     public long LongCount {
-      get { return dict.Count + (hasNullValue ? 1 : 0); }
-    }
-    public static Map<U, V> _DafnyDefaultValue() {
-      return Empty;
+      get { return dict.Count + (hasNullKey ? 1 : 0); }
     }
 
-    public bool Equals(Map<U, V> other) {
-      if (hasNullValue != other.hasNullValue || dict.Count != other.dict.Count) {
+    public bool Equals(IMap<U, V> other) {
+      if (other == null || LongCount != other.LongCount) {
         return false;
-      } else if (hasNullValue && !Dafny.Helpers.AreEqual(nullValue, other.nullValue)) {
-        return false;
+      } else if (this == other) {
+        return true;
       }
-      foreach (U u in dict.Keys) {
-        V v1 = dict[u];
-        V v2;
-        if (!other.dict.TryGetValue(u, out v2)) {
-          return false; // other dictionary does not contain this element
+      if (hasNullKey) {
+        if (!other.Contains(default(U)) || !object.Equals(nullValue, Select(other, default(U)))) {
+          return false;
         }
-        if (!Dafny.Helpers.AreEqual(v1, v2)) {
+      }
+      foreach (var item in dict) {
+        if (!other.Contains(item.Key) || !object.Equals(item.Value, Select(other, item.Key))) {
+          return false;
+        }
+      }
+      return true;
+    }
+    public bool EqualsObjObj(IMap<object, object> other) {
+      if (!(this is IMap<object, object>) || other == null || LongCount != other.LongCount) {
+        return false;
+      } else if (this == other) {
+        return true;
+      }
+      var oth = Map<object, object>.FromIMap(other);
+      if (hasNullKey) {
+        if (!oth.Contains(default(U)) || !object.Equals(nullValue, Map<object, object>.Select(oth, default(U)))) {
+          return false;
+        }
+      }
+      foreach (var item in dict) {
+        if (!other.Contains(item.Key) || !object.Equals(item.Value, Map<object, object>.Select(oth, item.Key))) {
           return false;
         }
       }
       return true;
     }
     public override bool Equals(object other) {
-      return other is Map<U, V> && Equals((Map<U, V>)other);
+      // See comment in Set.Equals
+      var m = other as IMap<U, V>;
+      if (m != null) {
+        return Equals(m);
+      }
+      var imapoo = other as IMap<object, object>;
+      if (imapoo != null) {
+        return EqualsObjObj(imapoo);
+      } else {
+        return false;
+      }
     }
+
     public override int GetHashCode() {
       var hashCode = 1;
-      if (hasNullValue) {
+      if (hasNullKey) {
         var key = Dafny.Helpers.GetHashCode(default(U));
         key = (key << 3) | (key >> 29) ^ Dafny.Helpers.GetHashCode(nullValue);
         hashCode = hashCode * (key + 3);
@@ -3018,7 +3119,7 @@ namespace Dafny
     public override string ToString() {
       var s = "map[";
       var sep = "";
-      if (hasNullValue) {
+      if (hasNullKey) {
         s += sep + Dafny.Helpers.ToString(default(U)) + " := " + Dafny.Helpers.ToString(nullValue);
         sep = ", ";
       }
@@ -3028,153 +3129,250 @@ namespace Dafny
       }
       return s + "]";
     }
-    public bool IsDisjointFrom(Map<U, V> other) {
-      if (hasNullValue && other.hasNullValue) {
-        return false;
-      }
-      foreach (U u in dict.Keys) {
-        if (other.dict.ContainsKey(u))
-          return false;
-      }
-      foreach (U u in other.dict.Keys) {
-        if (dict.ContainsKey(u))
-          return false;
-      }
-      return true;
-    }
     public bool Contains<G>(G u) {
-      return u == null ? hasNullValue : u is U && dict.ContainsKey((U)(object)u);
+      return u == null ? hasNullKey : u is U && dict.ContainsKey((U)(object)u);
     }
-    public V Select(U index) {
-      // evidently, the following will throw some exception if "index" in not a key of the map
-      return index == null && hasNullValue ? nullValue : dict[index];
+    public static V Select(IMap<U, V> th, U index) {
+      // the following will throw an exception if "index" in not a key of the map
+      var m = FromIMap(th);
+      return index == null && m.hasNullKey ? m.nullValue : m.dict[index];
     }
-#if DAFNY_USE_SYSTEM_COLLECTIONS_IMMUTABLE
-    public Map<U, V> Update(U index, V val) {
-      var d = dict.ToBuilder();
+    public static IMap<U, V> Update(IMap<U, V> th, U index, V val) {
+      var m = FromIMap(th);
+      var d = m.dict.ToBuilder();
       if (index == null) {
         return new Map<U, V>(d, true, val);
       } else {
         d[index] = val;
-        return new Map<U, V>(d, hasNullValue, nullValue);
+        return new Map<U, V>(d, m.hasNullKey, m.nullValue);
       }
     }
-#else
-    public Map<U, V> Update(U index, V val) {
-      if (index == null) {
-        return new Map<U, V>(dict, true, val);
-      } else {
-        var d = new Dictionary<U, V>(dict);
-        d[index] = val;
-        return new Map<U, V>(d, hasNullValue, nullValue);
-      }
+
+    public static IMap<U, V> Merge(IMap<U, V> th, IMap<U, V> other) {
+      var a = FromIMap(th);
+      var b = FromIMap(other);
+      ImmutableDictionary<U, V> d = a.dict.SetItems(b.dict);
+      return new Map<U, V>(d, a.hasNullKey || b.hasNullKey, b.hasNullKey ? b.nullValue : a.nullValue);
     }
-#endif
-    public Set<U> Keys {
+
+    public static IMap<U, V> Subtract(IMap<U, V> th, ISet<U> keys) {
+      var a = FromIMap(th);
+      ImmutableDictionary<U, V> d = a.dict.RemoveRange(keys.Elements);
+      return new Map<U, V>(d, a.hasNullKey && !keys.Contains<object>(null), a.nullValue);
+    }
+
+    public ISet<U> Keys {
       get {
-        if (hasNullValue) {
+        if (hasNullKey) {
           return Dafny.Set<U>.FromCollectionPlusOne(dict.Keys, default(U));
         } else {
           return Dafny.Set<U>.FromCollection(dict.Keys);
         }
       }
     }
-    public Set<V> Values {
+    public ISet<V> Values {
       get {
-        if (hasNullValue) {
+        if (hasNullKey) {
           return Dafny.Set<V>.FromCollectionPlusOne(dict.Values, nullValue);
         } else {
           return Dafny.Set<V>.FromCollection(dict.Values);
         }
       }
     }
-    public Set<_System.Tuple2<U, V>> Items {
+
+    public IEnumerable<IPair<U, V>> ItemEnumerable {
       get {
-        HashSet<_System.Tuple2<U, V>> result = new HashSet<_System.Tuple2<U, V>>();
-        if (hasNullValue) {
-          result.Add(_System.Tuple2<U, V>.create(default(U), nullValue));
+        if (hasNullKey) {
+          yield return new Pair<U, V>(default(U), nullValue);
         }
         foreach (KeyValuePair<U, V> kvp in dict) {
-          result.Add(_System.Tuple2<U, V>.create(kvp.Key, kvp.Value));
+          yield return new Pair<U, V>(kvp.Key, kvp.Value);
         }
-        return Dafny.Set<_System.Tuple2<U, V>>.FromCollection(result);
       }
+    }
+
+    public static ISet<_System._ITuple2<U, V>> Items(IMap<U, V> m) {
+      var result = new HashSet<_System._ITuple2<U, V>>();
+      foreach (var item in m.ItemEnumerable) {
+        result.Add(_System.Tuple2<U, V>.create(item.Car, item.Cdr));
+      }
+      return Dafny.Set<_System._ITuple2<U, V>>.FromCollection(result);
     }
   }
 
-  public class Sequence<T>
-  {
-    readonly T[] elmts;
-    public Sequence(T[] ee) {
-      elmts = ee;
+  public interface ISequence<out T> {
+    long LongCount { get; }
+    int Count { get; }
+    T[] Elements { get; }
+    IEnumerable<T> UniqueElements { get; }
+    T Select(ulong index);
+    T Select(long index);
+    T Select(uint index);
+    T Select(int index);
+    T Select(BigInteger index);
+    bool Contains<G>(G g);
+    ISequence<T> Take(long m);
+    ISequence<T> Take(ulong n);
+    ISequence<T> Take(BigInteger n);
+    ISequence<T> Drop(long m);
+    ISequence<T> Drop(ulong n);
+    ISequence<T> Drop(BigInteger n);
+    ISequence<T> Subsequence(long lo, long hi);
+    ISequence<T> Subsequence(long lo, ulong hi);
+    ISequence<T> Subsequence(long lo, BigInteger hi);
+    ISequence<T> Subsequence(ulong lo, long hi);
+    ISequence<T> Subsequence(ulong lo, ulong hi);
+    ISequence<T> Subsequence(ulong lo, BigInteger hi);
+    ISequence<T> Subsequence(BigInteger lo, long hi);
+    ISequence<T> Subsequence(BigInteger lo, ulong hi);
+    ISequence<T> Subsequence(BigInteger lo, BigInteger hi);
+    bool EqualsAux(ISequence<object> other);
+    ISequence<U> DowncastClone<U>(Func<T, U> converter);
+  }
+
+  public abstract class Sequence<T> : ISequence<T> {
+    public static readonly ISequence<T> Empty = new ArraySequence<T>(new T[0]);
+
+    private static readonly TypeDescriptor<ISequence<T>> _TYPE = new Dafny.TypeDescriptor<ISequence<T>>(Empty);
+    public static TypeDescriptor<ISequence<T>> _TypeDescriptor() {
+      return _TYPE;
     }
-    public static Sequence<T> Empty {
-      get {
-        return new Sequence<T>(new T[0]);
+
+    public static ISequence<T> Create(BigInteger length, System.Func<BigInteger, T> init) {
+      var len = (int)length;
+      var values = new T[len];
+      for (int i = 0; i < len; i++) {
+        values[i] = init(new BigInteger(i));
+      }
+      return new ArraySequence<T>(values);
+    }
+    public static ISequence<T> FromArray(T[] values) {
+      return new ArraySequence<T>(values);
+    }
+    public static ISequence<T> FromElements(params T[] values) {
+      return new ArraySequence<T>(values);
+    }
+    public static ISequence<char> FromString(string s) {
+      return new ArraySequence<char>(s.ToCharArray());
+    }
+    public ISequence<U> DowncastClone<U>(Func<T, U> converter) {
+      if (this is ISequence<U> th) {
+        return th;
+      } else {
+        var values = new U[this.LongCount];
+        for (long i = 0; i < this.LongCount; i++) {
+          var val = converter(this.Select(i));
+          values[i] = val;
+        }
+        return new ArraySequence<U>(values);
       }
     }
-    public static Sequence<T> FromElements(params T[] values) {
-      return new Sequence<T>(values);
+    public static ISequence<T> Update(ISequence<T> sequence, long index, T t) {
+      T[] tmp = (T[])sequence.Elements.Clone();
+      tmp[index] = t;
+      return new ArraySequence<T>(tmp);
     }
-    public static Sequence<char> FromString(string s) {
-      return new Sequence<char>(s.ToCharArray());
+    public static ISequence<T> Update(ISequence<T> sequence, ulong index, T t) {
+      return Update(sequence, (long)index, t);
     }
-    public static Sequence<T> _DafnyDefaultValue() {
-      return Empty;
+    public static ISequence<T> Update(ISequence<T> sequence, BigInteger index, T t) {
+      return Update(sequence, (long)index, t);
     }
-    public int Count {
-      get { return elmts.Length; }
+    public static bool EqualUntil(ISequence<T> left, ISequence<T> right, int n) {
+      T[] leftElmts = left.Elements, rightElmts = right.Elements;
+      for (int i = 0; i < n; i++) {
+        if (!object.Equals(leftElmts[i], rightElmts[i])) {
+          return false;
+        }
+      }
+      return true;
     }
+    public static bool IsPrefixOf(ISequence<T> left, ISequence<T> right) {
+      int n = left.Elements.Length;
+      return n <= right.Elements.Length && EqualUntil(left, right, n);
+    }
+    public static bool IsProperPrefixOf(ISequence<T> left, ISequence<T> right) {
+      int n = left.Elements.Length;
+      return n < right.Elements.Length && EqualUntil(left, right, n);
+    }
+    public static ISequence<T> Concat(ISequence<T> left, ISequence<T> right) {
+      if (left.Count == 0) {
+        return right;
+      }
+      if (right.Count == 0) {
+        return left;
+      }
+      return new ConcatSequence<T>(left, right);
+    }
+    // Make Count a public abstract instead of LongCount, since the "array size is limited to a total of 4 billion
+    // elements, and to a maximum index of 0X7FEFFFFF". Therefore, as a protection, limit this to int32.
+    // https://docs.microsoft.com/en-us/dotnet/api/system.array
+    public abstract int Count { get; }
     public long LongCount {
-      get { return elmts.LongLength; }
+      get { return Count; }
     }
+    // ImmutableElements cannot be public in the interface since ImmutableArray<T> leads to a
+    // "covariant type T occurs in invariant position" error. There do not appear to be interfaces for ImmutableArray<T>
+    // that resolve this.
+    protected abstract ImmutableArray<T> ImmutableElements { get; }
+
     public T[] Elements {
-      get {
-        return elmts;
-      }
+      get { return ImmutableElements.ToArray(); }
     }
     public IEnumerable<T> UniqueElements {
       get {
-        var st = Set<T>.FromElements(elmts);
+        var st = Set<T>.FromCollection(ImmutableElements);
         return st.Elements;
       }
     }
+
     public T Select(ulong index) {
-      return elmts[index];
+      return ImmutableElements[checked((int)index)];
     }
     public T Select(long index) {
-      return elmts[index];
+      return ImmutableElements[checked((int)index)];
     }
     public T Select(uint index) {
-      return elmts[index];
+      return ImmutableElements[checked((int)index)];
     }
     public T Select(int index) {
-      return elmts[index];
+      return ImmutableElements[index];
     }
     public T Select(BigInteger index) {
-      return elmts[(int)index];
+      return ImmutableElements[(int)index];
     }
-    public Sequence<T> Update(long index, T t) {
-      T[] a = (T[])elmts.Clone();
-      a[index] = t;
-      return new Sequence<T>(a);
-    }
-    public Sequence<T> Update(ulong index, T t) {
-      return Update((long)index, t);
-    }
-    public Sequence<T> Update(BigInteger index, T t) {
-      return Update((long)index, t);
-    }
-    public bool Equals(Sequence<T> other) {
-      int n = elmts.Length;
-      return n == other.elmts.Length && EqualUntil(other, n);
+    public bool Equals(ISequence<T> other) {
+      int n = ImmutableElements.Length;
+      return n == other.Elements.Length && EqualUntil(this, other, n);
     }
     public override bool Equals(object other) {
-      return other is Sequence<T> && Equals((Sequence<T>)other);
+      if (other is ISequence<T>) {
+        return Equals((ISequence<T>)other);
+      }
+      var th = this as ISequence<object>;
+      var oth = other as ISequence<object>;
+      if (th != null && oth != null) {
+        // see explanation in Set.Equals
+        return oth.EqualsAux(th);
+      } else {
+        return false;
+      }
+    }
+    public bool EqualsAux(ISequence<object> other) {
+      var s = other as ISequence<T>;
+      if (s != null) {
+        return Equals(s);
+      } else {
+        return false;
+      }
     }
     public override int GetHashCode() {
-      if (elmts == null || elmts.Length == 0)
+      ImmutableArray<T> elmts = ImmutableElements;
+      // https://devblogs.microsoft.com/dotnet/please-welcome-immutablearrayt/
+      if (elmts.IsDefaultOrEmpty) {
         return 0;
+      }
+
       var hashCode = 0;
       for (var i = 0; i < elmts.Length; i++) {
         hashCode = (hashCode << 3) | (hashCode >> 29) ^ Dafny.Helpers.GetHashCode(elmts[i]);
@@ -3182,7 +3380,10 @@ namespace Dafny
       return hashCode;
     }
     public override string ToString() {
-      if (elmts is char[]) {
+      // This is required because (ImmutableElements is ImmutableArray<char>) is not a valid type check
+      var typeCheckTmp = new T[0];
+      ImmutableArray<T> elmts = ImmutableElements;
+      if (typeCheckTmp is char[]) {
         var s = "";
         foreach (var t in elmts) {
           s += t.ToString();
@@ -3198,87 +3399,230 @@ namespace Dafny
         return s + "]";
       }
     }
-    bool EqualUntil(Sequence<T> other, int n) {
-      for (int i = 0; i < n; i++) {
-        if (!Dafny.Helpers.AreEqual(elmts[i], other.elmts[i]))
-          return false;
-      }
-      return true;
-    }
-    public bool IsProperPrefixOf(Sequence<T> other) {
-      int n = elmts.Length;
-      return n < other.elmts.Length && EqualUntil(other, n);
-    }
-    public bool IsPrefixOf(Sequence<T> other) {
-      int n = elmts.Length;
-      return n <= other.elmts.Length && EqualUntil(other, n);
-    }
-    public Sequence<T> Concat(Sequence<T> other) {
-      if (elmts.Length == 0)
-        return other;
-      else if (other.elmts.Length == 0)
-        return this;
-      T[] a = new T[elmts.Length + other.elmts.Length];
-      System.Array.Copy(elmts, 0, a, 0, elmts.Length);
-      System.Array.Copy(other.elmts, 0, a, elmts.Length, other.elmts.Length);
-      return new Sequence<T>(a);
-    }
     public bool Contains<G>(G g) {
       if (g == null || g is T) {
         var t = (T)(object)g;
-        int n = elmts.Length;
-        for (int i = 0; i < n; i++) {
-          if (Dafny.Helpers.AreEqual(t, elmts[i]))
-            return true;
-        }
+        return ImmutableElements.Contains(t);
       }
       return false;
     }
-    public Sequence<T> Take(long m) {
-      if (elmts.LongLength == m)
+    public ISequence<T> Take(long m) {
+      if (ImmutableElements.Length == m) {
         return this;
-      T[] a = new T[m];
-      System.Array.Copy(elmts, a, m);
-      return new Sequence<T>(a);
+      }
+
+      int length = checked((int)m);
+      T[] tmp = new T[length];
+      ImmutableElements.CopyTo(0, tmp, 0, length);
+      return new ArraySequence<T>(tmp);
     }
-    public Sequence<T> Take(ulong n) {
+    public ISequence<T> Take(ulong n) {
       return Take((long)n);
     }
-    public Sequence<T> Take(BigInteger n) {
+    public ISequence<T> Take(BigInteger n) {
       return Take((long)n);
     }
-    public Sequence<T> Drop(long m) {
-      if (m == 0)
+    public ISequence<T> Drop(long m) {
+      int startingElement = checked((int)m);
+      if (startingElement == 0) {
         return this;
-      T[] a = new T[elmts.Length - m];
-      System.Array.Copy(elmts, m, a, 0, elmts.Length - m);
-      return new Sequence<T>(a);
+      }
+
+      int length = ImmutableElements.Length - startingElement;
+      T[] tmp = new T[length];
+      ImmutableElements.CopyTo(startingElement, tmp, 0, length);
+      return new ArraySequence<T>(tmp);
     }
-    public Sequence<T> Drop(ulong n) {
+    public ISequence<T> Drop(ulong n) {
       return Drop((long)n);
     }
-    public Sequence<T> Drop(BigInteger n) {
-      if (n.IsZero)
+    public ISequence<T> Drop(BigInteger n) {
+      if (n.IsZero) {
         return this;
+      }
+
       return Drop((long)n);
+    }
+    public ISequence<T> Subsequence(long lo, long hi) {
+      if (lo == 0 && hi == ImmutableElements.Length) {
+        return this;
+      }
+      int startingIndex = checked((int)lo);
+      int endingIndex = checked((int)hi);
+      var length = endingIndex - startingIndex;
+      T[] tmp = new T[length];
+      ImmutableElements.CopyTo(startingIndex, tmp, 0, length);
+      return new ArraySequence<T>(tmp);
+    }
+    public ISequence<T> Subsequence(long lo, ulong hi) {
+      return Subsequence(lo, (long)hi);
+    }
+    public ISequence<T> Subsequence(long lo, BigInteger hi) {
+      return Subsequence(lo, (long)hi);
+    }
+    public ISequence<T> Subsequence(ulong lo, long hi) {
+      return Subsequence((long)lo, hi);
+    }
+    public ISequence<T> Subsequence(ulong lo, ulong hi) {
+      return Subsequence((long)lo, (long)hi);
+    }
+    public ISequence<T> Subsequence(ulong lo, BigInteger hi) {
+      return Subsequence((long)lo, (long)hi);
+    }
+    public ISequence<T> Subsequence(BigInteger lo, long hi) {
+      return Subsequence((long)lo, hi);
+    }
+    public ISequence<T> Subsequence(BigInteger lo, ulong hi) {
+      return Subsequence((long)lo, (long)hi);
+    }
+    public ISequence<T> Subsequence(BigInteger lo, BigInteger hi) {
+      return Subsequence((long)lo, (long)hi);
     }
   }
-  public struct Pair<A, B>
-  {
-    public readonly A Car;
-    public readonly B Cdr;
+
+  internal class ArraySequence<T> : Sequence<T> {
+    private readonly ImmutableArray<T> elmts;
+
+    internal ArraySequence(ImmutableArray<T> ee) {
+      elmts = ee;
+    }
+    internal ArraySequence(T[] ee) {
+      elmts = ImmutableArray.Create<T>(ee);
+    }
+
+    protected override ImmutableArray<T> ImmutableElements {
+      get {
+        return elmts;
+      }
+    }
+    public override int Count {
+      get {
+        return elmts.Length;
+      }
+    }
+  }
+
+  internal class ConcatSequence<T> : Sequence<T> {
+    // INVARIANT: Either left != null, right != null, and elmts's underlying array == null or
+    // left == null, right == null, and elmts's underlying array != null
+    private volatile ISequence<T> left, right;
+    private ImmutableArray<T> elmts;
+    private readonly int count;
+
+    internal ConcatSequence(ISequence<T> left, ISequence<T> right) {
+      this.left = left;
+      this.right = right;
+      this.count = left.Count + right.Count;
+    }
+
+    protected override ImmutableArray<T> ImmutableElements {
+      get {
+        // IsDefault returns true if the underlying array is a null reference
+        // https://devblogs.microsoft.com/dotnet/please-welcome-immutablearrayt/
+        if (elmts.IsDefault) {
+          elmts = ComputeElements();
+          // We don't need the original sequences anymore; let them be
+          // garbage-collected
+          left = null;
+          right = null;
+        }
+        return elmts;
+      }
+    }
+
+    public override int Count {
+      get {
+        return count;
+      }
+    }
+
+    private ImmutableArray<T> ComputeElements() {
+      // Traverse the tree formed by all descendants which are ConcatSequences
+      var ansBuilder = ImmutableArray.CreateBuilder<T>(count);
+      var toVisit = new Stack<ISequence<T>>();
+      var (leftBuffer, rightBuffer) = (left, right);
+      if (left == null || right == null) {
+        // elmts can't be .IsDefault while either left, or right are null
+        return elmts;
+      }
+      toVisit.Push(rightBuffer);
+      toVisit.Push(leftBuffer);
+
+      while (toVisit.Count != 0) {
+        var seq = toVisit.Pop();
+        if (seq is ConcatSequence<T> cs && cs.elmts.IsDefault) {
+          (leftBuffer, rightBuffer) = (cs.left, cs.right);
+          if (cs.left == null || cs.right == null) {
+            // !cs.elmts.IsDefault, due to concurrent enumeration
+            toVisit.Push(cs);
+          } else {
+            toVisit.Push(rightBuffer);
+            toVisit.Push(leftBuffer);
+          }
+        } else {
+          var array = seq.Elements;
+          ansBuilder.AddRange(array);
+        }
+      }
+      return ansBuilder.ToImmutable();
+    }
+  }
+
+  public interface IPair<out A, out B> {
+    A Car { get; }
+    B Cdr { get; }
+  }
+
+  public class Pair<A, B> : IPair<A, B> {
+    private A car;
+    private B cdr;
+    public A Car { get { return car; } }
+    public B Cdr { get { return cdr; } }
     public Pair(A a, B b) {
-      this.Car = a;
-      this.Cdr = b;
+      this.car = a;
+      this.cdr = b;
     }
   }
-  public partial class Helpers {
-    public static bool AreEqual<G>(G a, G b) {
-      return a == null ? b == null : a.Equals(b);
+
+  public class TypeDescriptor<T> {
+    private readonly T initValue;
+    public TypeDescriptor(T initValue) {
+      this.initValue = initValue;
     }
+    public T Default() {
+      return initValue;
+    }
+  }
+
+  public partial class Helpers {
     public static int GetHashCode<G>(G g) {
       return g == null ? 1001 : g.GetHashCode();
     }
+
+    public static int ToIntChecked(BigInteger i, string msg) {
+      if (i > Int32.MaxValue || i < Int32.MinValue) {
+        if (msg == null) {
+          msg = "value out of range for a 32-bit int";
+        }
+
+        throw new HaltException(msg + ": " + i);
+      }
+      return (int)i;
+    }
+    public static int ToIntChecked(long i, string msg) {
+      if (i > Int32.MaxValue || i < Int32.MinValue) {
+        if (msg == null) {
+          msg = "value out of range for a 32-bit int";
+        }
+
+        throw new HaltException(msg + ": " + i);
+      }
+      return (int)i;
+    }
+    public static int ToIntChecked(int i, string msg) {
+      return i;
+    }
+
     public static string ToString<G>(G g) {
       if (g == null) {
         return "null";
@@ -3291,17 +3635,24 @@ namespace Dafny
     public static void Print<G>(G g) {
       System.Console.Write(ToString(g));
     }
-    public static G Default<G>() {
-      System.Type ty = typeof(G);
-      System.Reflection.MethodInfo mInfo = ty.GetMethod("_DafnyDefaultValue");
-      if (mInfo != null) {
-        G g = (G)mInfo.Invoke(null, null);
-        return g;
-      } else {
-        return default(G);
-      }
+
+    public static readonly TypeDescriptor<bool> BOOL = new TypeDescriptor<bool>(false);
+    public static readonly TypeDescriptor<char> CHAR = new TypeDescriptor<char>('D');  // See CharType.DefaultValue in Dafny source code
+    public static readonly TypeDescriptor<BigInteger> INT = new TypeDescriptor<BigInteger>(BigInteger.Zero);
+    public static readonly TypeDescriptor<BigRational> REAL = new TypeDescriptor<BigRational>(BigRational.ZERO);
+    public static readonly TypeDescriptor<byte> UINT8 = new TypeDescriptor<byte>(0);
+    public static readonly TypeDescriptor<ushort> UINT16 = new TypeDescriptor<ushort>(0);
+    public static readonly TypeDescriptor<uint> UINT32 = new TypeDescriptor<uint>(0);
+    public static readonly TypeDescriptor<ulong> UINT64 = new TypeDescriptor<ulong>(0);
+
+    public static TypeDescriptor<T> NULL<T>() where T : class {
+      return new TypeDescriptor<T>(null);
     }
-    // Computing forall/exists quantifiers
+
+    public static TypeDescriptor<A[]> ARRAY<A>() {
+      return new TypeDescriptor<A[]>(new A[0]);
+    }
+
     public static bool Quantifier<T>(IEnumerable<T> vals, bool frall, System.Predicate<T> pred) {
       foreach (var u in vals) {
         if (pred(u) != frall) { return !frall; }
@@ -3320,14 +3671,14 @@ namespace Dafny
     }
     public static IEnumerable<BigInteger> AllIntegers() {
       yield return new BigInteger(0);
-      for (var j = new BigInteger(1);; j++) {
+      for (var j = new BigInteger(1); ; j++) {
         yield return j;
         yield return -j;
       }
     }
     public static IEnumerable<BigInteger> IntegerRange(Nullable<BigInteger> lo, Nullable<BigInteger> hi) {
       if (lo == null) {
-        for (var j = (BigInteger)hi; true; ) {
+        for (var j = (BigInteger)hi; true;) {
           j--;
           yield return j;
         }
@@ -3456,23 +3807,35 @@ namespace Dafny
         return c.IsZero ? c : BigInteger.Subtract(bp, c);
       }
     }
-    public static Sequence<T> SeqFromArray<T>(T[] array) {
-      return new Sequence<T>((T[])array.Clone());
+
+    public static U CastConverter<T, U>(T t) {
+      return (U)(object)t;
     }
-    // In .NET version 4.5, it it possible to mark a method with "AggressiveInlining", which says to inline the
+
+    public static Sequence<T> SeqFromArray<T>(T[] array) {
+      return new ArraySequence<T>((T[])array.Clone());
+    }
+    // In .NET version 4.5, it is possible to mark a method with "AggressiveInlining", which says to inline the
     // method if possible.  Method "ExpressionSequence" would be a good candidate for it:
     // [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    public static U ExpressionSequence<T, U>(T t, U u)
-    {
+    public static U ExpressionSequence<T, U>(T t, U u) {
       return u;
     }
 
-    public static U Let<T, U>(T t, Func<T,U> f) {
+    public static U Let<T, U>(T t, Func<T, U> f) {
       return f(t);
     }
 
     public static A Id<A>(A a) {
       return a;
+    }
+
+    public static void WithHaltHandling(Action action) {
+      try {
+        action();
+      } catch (HaltException e) {
+        Console.WriteLine("[Program halted] " + e.Message);
+      }
     }
   }
 
@@ -3491,8 +3854,7 @@ namespace Dafny
     }
   }
 
-  public struct BigRational
-  {
+  public struct BigRational {
     public static readonly BigRational ZERO = new BigRational(0);
 
     // We need to deal with the special case "num == 0 && den == 0", because
@@ -3594,6 +3956,11 @@ namespace Dafny
       Normalize(this, that, out aa, out bb, out dd);
       return aa.CompareTo(bb);
     }
+    public int Sign {
+      get {
+        return num.Sign;
+      }
+    }
     public override int GetHashCode() {
       return num.GetHashCode() + 29 * den.GetHashCode();
     }
@@ -3650,11 +4017,20 @@ namespace Dafny
       return a * bReciprocal;
     }
   }
+
+  public class HaltException : Exception {
+    public HaltException(object message) : base(message.ToString()) {
+    }
+  }
 }
 
-namespace @_System
-{
-  public class Tuple2<T0,T1> {
+namespace @_System {
+  public interface _ITuple2<out T0, out T1> {
+    T0 dtor__0 { get; }
+    T1 dtor__1 { get; }
+  }
+
+  public class Tuple2<T0, T1> : _ITuple2<T0, T1> {
     public readonly T0 _0;
     public readonly T1 _1;
     public Tuple2(T0 _0, T1 _1) {
@@ -3662,15 +4038,15 @@ namespace @_System
       this._1 = _1;
     }
     public override bool Equals(object other) {
-      var oth = other as _System.@Tuple2<T0,T1>;
-      return oth != null && Dafny.Helpers.AreEqual(this._0, oth._0) && Dafny.Helpers.AreEqual(this._1, oth._1);
+      var oth = other as _System.Tuple2<T0, T1>;
+      return oth != null && object.Equals(this._0, oth._0) && object.Equals(this._1, oth._1);
     }
     public override int GetHashCode() {
       ulong hash = 5381;
       hash = ((hash << 5) + hash) + 0;
       hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._0));
       hash = ((hash << 5) + hash) + ((ulong)Dafny.Helpers.GetHashCode(this._1));
-      return (int) hash;
+      return (int)hash;
     }
     public override string ToString() {
       string s = "";
@@ -3681,20 +4057,15 @@ namespace @_System
       s += ")";
       return s;
     }
-    static Tuple2<T0,T1> theDefault;
-    public static Tuple2<T0,T1> Default {
-      get {
-        if (theDefault == null) {
-          theDefault = new _System.@Tuple2<T0,T1>(Dafny.Helpers.Default<T0>(), Dafny.Helpers.Default<T1>());
-        }
-        return theDefault;
-      }
+    public static _ITuple2<T0, T1> Default(T0 _default_T0, T1 _default_T1) {
+      return create(_default_T0, _default_T1);
     }
-    public static Tuple2<T0,T1> _DafnyDefaultValue() { return Default; }
-    public static Tuple2<T0,T1> create(T0 _0, T1 _1) {
-      return new Tuple2<T0,T1>(_0, _1);
+    public static Dafny.TypeDescriptor<_System._ITuple2<T0, T1>> _TypeDescriptor(Dafny.TypeDescriptor<T0> _td_T0, Dafny.TypeDescriptor<T1> _td_T1) {
+      return new Dafny.TypeDescriptor<_System._ITuple2<T0, T1>>(_System.Tuple2<T0, T1>.Default(_td_T0.Default(), _td_T1.Default()));
     }
-    public bool is____hMake3 { get { return true; } }
+    public static _ITuple2<T0, T1> create(T0 _0, T1 _1) {
+      return new Tuple2<T0, T1>(_0, _1);
+    }
     public T0 dtor__0 {
       get {
         return this._0;
@@ -3713,27 +4084,45 @@ namespace Dafny {
     public static T[] InitNewArray1<T>(T z, BigInteger size0) {
       int s0 = (int)size0;
       T[] a = new T[s0];
-      for (int i0 = 0; i0 < s0; i0++)
+      for (int i0 = 0; i0 < s0; i0++) {
         a[i0] = z;
+      }
       return a;
     }
   }
 } // end of namespace Dafny
+public static class FuncExtensions {
+  public static Func<U, UResult> DowncastClone<T, TResult, U, UResult>(this Func<T, TResult> F, Func<U, T> ArgConv, Func<TResult, UResult> ResConv) {
+    return arg => ResConv(F(ArgConv(arg)));
+  }
+  public static Func<UResult> DowncastClone<TResult, UResult>(this Func<TResult> F, Func<TResult, UResult> ResConv) {
+    return () => ResConv(F());
+  }
+  public static Func<U1, U2, UResult> DowncastClone<T1, T2, TResult, U1, U2, UResult>(this Func<T1, T2, TResult> F, Func<U1, T1> ArgConv1, Func<U2, T2> ArgConv2, Func<TResult, UResult> ResConv) {
+    return (arg1, arg2) => ResConv(F(ArgConv1(arg1), ArgConv2(arg2)));
+  }
+  public static Func<U1, U2, U3, UResult> DowncastClone<T1, T2, T3, TResult, U1, U2, U3, UResult>(this Func<T1, T2, T3, TResult> F, Func<U1, T1> ArgConv1, Func<U2, T2> ArgConv2, Func<U3, T3> ArgConv3, Func<TResult, UResult> ResConv) {
+    return (arg1, arg2, arg3) => ResConv(F(ArgConv1(arg1), ArgConv2(arg2), ArgConv3(arg3)));
+  }
+}
 namespace _System {
 
-
   public partial class nat {
+    private static readonly Dafny.TypeDescriptor<BigInteger> _TYPE = new Dafny.TypeDescriptor<BigInteger>(BigInteger.Zero);
+    public static Dafny.TypeDescriptor<BigInteger> _TypeDescriptor() {
+      return _TYPE;
+    }
   }
 
-
-
-
-
-
-
-
-  public class Tuple0 {
+  public interface _ITuple0 {
+    _ITuple0 DowncastClone();
+  }
+  public class Tuple0 : _ITuple0 {
     public Tuple0() {
+    }
+    public _ITuple0 DowncastClone() {
+      if (this is _ITuple0 dt) { return dt; }
+      return new Tuple0();
     }
     public override bool Equals(object other) {
       var oth = other as _System.Tuple0;
@@ -3747,32 +4136,33 @@ namespace _System {
     public override string ToString() {
       return "()";
     }
-    static Tuple0 theDefault;
-    public static Tuple0 Default {
-      get {
-        if (theDefault == null) {
-          theDefault = new _System.Tuple0();
-        }
-        return theDefault;
-      }
+    private static readonly _ITuple0 theDefault = create();
+    public static _ITuple0 Default() {
+      return theDefault;
     }
-    public static Tuple0 _DafnyDefaultValue() { return Default; }
-    public static Tuple0 create() {
+    private static readonly Dafny.TypeDescriptor<_System._ITuple0> _TYPE = new Dafny.TypeDescriptor<_System._ITuple0>(_System.Tuple0.Default());
+    public static Dafny.TypeDescriptor<_System._ITuple0> _TypeDescriptor() {
+      return _TYPE;
+    }
+    public static _ITuple0 create() {
       return new Tuple0();
     }
-    public bool is____hMake0 { get { return true; } }
-    public static System.Collections.Generic.IEnumerable<Tuple0> AllSingletonConstructors {
+    public static System.Collections.Generic.IEnumerable<_ITuple0> AllSingletonConstructors {
       get {
         yield return Tuple0.create();
       }
     }
   }
 } // end of namespace _System
-namespace _0_Int32_Compile {
+namespace Int32_Compile {
 
   public partial class t {
     public static System.Collections.Generic.IEnumerable<int> IntegerRange(BigInteger lo, BigInteger hi) {
       for (var j = lo; j < hi; j++) { yield return (int)j; }
+    }
+    private static readonly Dafny.TypeDescriptor<int> _TYPE = new Dafny.TypeDescriptor<int>(0);
+    public static Dafny.TypeDescriptor<int> _TypeDescriptor() {
+      return _TYPE;
     }
   }
 
@@ -3781,47 +4171,61 @@ namespace _0_Int32_Compile {
       return 2000000;
     } }
     public static int min { get {
-      return (0) - (2000000);
+      return -2000000;
     } }
   }
-} // end of namespace _0_Int32_Compile
-namespace _2_MyDatatypes_Compile {
+} // end of namespace Int32_Compile
+namespace MyDatatypes_Compile {
 
-  public abstract class Maybe<T> {
+  public interface _IMaybe<T> {
+    bool is_Error { get; }
+    bool is_Just { get; }
+    Dafny.ISequence<char> dtor_Error_a0 { get; }
+    T dtor_value { get; }
+    _IMaybe<__T> DowncastClone<__T>(Func<T, __T> converter0);
+  }
+  public abstract class Maybe<T> : _IMaybe<T> {
     public Maybe() { }
-    static Maybe<T> theDefault;
-    public static Maybe<T> Default {
-      get {
-        if (theDefault == null) {
-          theDefault = new _2_MyDatatypes_Compile.Maybe_Error<T>(Dafny.Sequence<char>.Empty);
-        }
-        return theDefault;
-      }
+    public static _IMaybe<T> Default() {
+      return create_Error(Dafny.Sequence<char>.Empty);
     }
-    public static Maybe<T> _DafnyDefaultValue() { return Default; }
-    public static Maybe<T> create_Error(Dafny.Sequence<char> _a0) {
+    public static Dafny.TypeDescriptor<MyDatatypes_Compile._IMaybe<T>> _TypeDescriptor() {
+      return new Dafny.TypeDescriptor<MyDatatypes_Compile._IMaybe<T>>(MyDatatypes_Compile.Maybe<T>.Default());
+    }
+    public static _IMaybe<T> create_Error(Dafny.ISequence<char> _a0) {
       return new Maybe_Error<T>(_a0);
     }
-    public static Maybe<T> create_Just(T @value) {
+    public static _IMaybe<T> create_Just(T @value) {
       return new Maybe_Just<T>(@value);
     }
     public bool is_Error { get { return this is Maybe_Error<T>; } }
     public bool is_Just { get { return this is Maybe_Just<T>; } }
+    public Dafny.ISequence<char> dtor_Error_a0 {
+      get {
+        var d = this;
+        return ((Maybe_Error<T>)d)._a0;
+      }
+    }
     public T dtor_value {
       get {
         var d = this;
-        return ((Maybe_Just<T>)d).@value; 
+        return ((Maybe_Just<T>)d).@value;
       }
     }
+    public abstract _IMaybe<__T> DowncastClone<__T>(Func<T, __T> converter0);
   }
   public class Maybe_Error<T> : Maybe<T> {
-    public readonly Dafny.Sequence<char> _a0;
-    public Maybe_Error(Dafny.Sequence<char> _a0) {
+    public readonly Dafny.ISequence<char> _a0;
+    public Maybe_Error(Dafny.ISequence<char> _a0) {
       this._a0 = _a0;
     }
+    public override _IMaybe<__T> DowncastClone<__T>(Func<T, __T> converter0) {
+      if (this is _IMaybe<__T> dt) { return dt; }
+      return new Maybe_Error<__T>(_a0);
+    }
     public override bool Equals(object other) {
-      var oth = other as _2_MyDatatypes_Compile.Maybe_Error<T>;
-      return oth != null && Dafny.Helpers.AreEqual(this._a0, oth._a0);
+      var oth = other as MyDatatypes_Compile.Maybe_Error<T>;
+      return oth != null && object.Equals(this._a0, oth._a0);
     }
     public override int GetHashCode() {
       ulong hash = 5381;
@@ -3830,7 +4234,7 @@ namespace _2_MyDatatypes_Compile {
       return (int) hash;
     }
     public override string ToString() {
-      string s = "_2_MyDatatypes_Compile.Maybe.Error";
+      string s = "MyDatatypes_Compile.Maybe.Error";
       s += "(";
       s += Dafny.Helpers.ToString(this._a0);
       s += ")";
@@ -3842,9 +4246,13 @@ namespace _2_MyDatatypes_Compile {
     public Maybe_Just(T @value) {
       this.@value = @value;
     }
+    public override _IMaybe<__T> DowncastClone<__T>(Func<T, __T> converter0) {
+      if (this is _IMaybe<__T> dt) { return dt; }
+      return new Maybe_Just<__T>(converter0(@value));
+    }
     public override bool Equals(object other) {
-      var oth = other as _2_MyDatatypes_Compile.Maybe_Just<T>;
-      return oth != null && Dafny.Helpers.AreEqual(this.@value, oth.@value);
+      var oth = other as MyDatatypes_Compile.Maybe_Just<T>;
+      return oth != null && object.Equals(this.@value, oth.@value);
     }
     public override int GetHashCode() {
       ulong hash = 5381;
@@ -3853,7 +4261,7 @@ namespace _2_MyDatatypes_Compile {
       return (int) hash;
     }
     public override string ToString() {
-      string s = "_2_MyDatatypes_Compile.Maybe.Just";
+      string s = "MyDatatypes_Compile.Maybe.Just";
       s += "(";
       s += Dafny.Helpers.ToString(this.@value);
       s += ")";
@@ -3861,402 +4269,403 @@ namespace _2_MyDatatypes_Compile {
     }
   }
 
-} // end of namespace _2_MyDatatypes_Compile
-namespace _6_InputPredicate_Compile {
+} // end of namespace MyDatatypes_Compile
+namespace InputPredicate_Compile {
 
-
-} // end of namespace _6_InputPredicate_Compile
-namespace _8_Useless_Compile {
-
-
-
+} // end of namespace InputPredicate_Compile
+namespace Useless_Compile {
 
   public partial class Parser {
-    public char[] content = new char[0];
-    public int contentLength = 0;
-    public int cursor = 0;
+    public Parser() {
+      this.content = new char[0];
+      this.contentLength = 0;
+      this.cursor = 0;
+    }
+    public  char[] content {get; set;}
+    public  int contentLength {get; set;}
+    public  int cursor {get; set;}
     public void __ctor(char[] c)
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      (_this).content = c;
-      (_this).contentLength = (int)(c).Length;
-      (_this).cursor = 0;
+      (this).content = c;
+      (this).contentLength = (int)(c).Length;
+      (this).cursor = 0;
     }
     public void skipLine()
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      while (((_this.cursor) < (_this.contentLength)) && (((_this.content)[(int)(_this.cursor)]) != ('\n'))) {
-        (_this).cursor = (_this.cursor) + (1);
+      while (((this.cursor) < (this.contentLength)) && (((this.content)[(int)(this.cursor)]) != ('\n'))) {
+        (this).cursor = (this.cursor) + (1);
       }
-      if ((_this.cursor) < (_this.contentLength)) {
-        (_this).cursor = (_this.cursor) + (1);
+      if ((this.cursor) < (this.contentLength)) {
+        (this).cursor = (this.cursor) + (1);
       }
     }
     public void toNextNumber()
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      while (((_this.cursor) < (_this.contentLength)) && (!(((('0') <= ((_this.content)[(int)(_this.cursor)])) && (((_this.content)[(int)(_this.cursor)]) <= ('9'))) || (((_this.content)[(int)(_this.cursor)]) == ('-'))))) {
-        (_this).cursor = (_this.cursor) + (1);
+      while (((this.cursor) < (this.contentLength)) && (!(((('0') <= ((this.content)[(int)(this.cursor)])) && (((this.content)[(int)(this.cursor)]) <= ('9'))) || (((this.content)[(int)(this.cursor)]) == ('-'))))) {
+        (this).cursor = (this.cursor) + (1);
       }
     }
-    public void extractNumber(out _2_MyDatatypes_Compile.Maybe<int> res)
+    public MyDatatypes_Compile._IMaybe<int> extractNumber()
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      res = _2_MyDatatypes_Compile.Maybe<int>.Default;
-      int _282_number;
-      _282_number = 0;
-      bool _283_isNegative;
-      _283_isNegative = false;
-      if (((_this.cursor) < (_this.contentLength)) && (((_this.content)[(int)(_this.cursor)]) == ('-'))) {
-        _283_isNegative = true;
-        (_this).cursor = (_this.cursor) + (1);
+      MyDatatypes_Compile._IMaybe<int> res = MyDatatypes_Compile.Maybe<int>.Default();
+      int _0_number;
+      _0_number = 0;
+      bool _1_isNegative;
+      _1_isNegative = false;
+      if (((this.cursor) < (this.contentLength)) && (((this.content)[(int)(this.cursor)]) == ('-'))) {
+        _1_isNegative = true;
+        (this).cursor = (this.cursor) + (1);
       }
-      if ((_this.cursor) == (_this.contentLength)) {
-        res = @_2_MyDatatypes_Compile.Maybe<int>.create_Error(Dafny.Sequence<char>.FromString("There is no number around here."));
-        return;
+      if ((this.cursor) == (this.contentLength)) {
+        res = MyDatatypes_Compile.Maybe<int>.create_Error(Dafny.Sequence<char>.FromString("There is no number around here."));
+        return res;
       }
-      while (((_this.cursor) < (_this.contentLength)) && ((('0') <= ((_this.content)[(int)(_this.cursor)])) && (((_this.content)[(int)(_this.cursor)]) <= ('9')))) {
-        int _284_digit;
-        _284_digit = ((int)((_this.content)[(int)(_this.cursor)])) - ((int)('0'));
-        if ((_282_number) <= (Dafny.Helpers.EuclideanDivision_int((_0_Int32_Compile.__default.max) - (_284_digit), 10))) {
-          { }
-          _282_number = ((_282_number) * (10)) + (_284_digit);
+      while (((this.cursor) < (this.contentLength)) && ((('0') <= ((this.content)[(int)(this.cursor)])) && (((this.content)[(int)(this.cursor)]) <= ('9')))) {
+        int _2_digit;
+        _2_digit = ((int)((this.content)[(int)(this.cursor)])) - ((int)('0'));
+        if ((_0_number) <= (Dafny.Helpers.EuclideanDivision_int((Int32_Compile.__default.max) - (_2_digit), 10))) {
+          _0_number = ((_0_number) * (10)) + (_2_digit);
         } else {
-          res = @_2_MyDatatypes_Compile.Maybe<int>.create_Error(Dafny.Sequence<char>.FromString("There is a number bigger than Int32.max"));
-          return;
+          res = MyDatatypes_Compile.Maybe<int>.create_Error(Dafny.Sequence<char>.FromString("There is a number bigger than Int32.max"));
+          return res;
         }
-        (_this).cursor = (_this.cursor) + (1);
+        (this).cursor = (this.cursor) + (1);
       }
-      if (_283_isNegative) {
-        _282_number = (0) - (_282_number);
+      if (_1_isNegative) {
+        _0_number = (0) - (_0_number);
       }
-      res = @_2_MyDatatypes_Compile.Maybe<int>.create_Just(_282_number);
-      return;
+      res = MyDatatypes_Compile.Maybe<int>.create_Just(_0_number);
+      return res;
+      return res;
     }
-    public void parse(out _2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>> result)
+    public MyDatatypes_Compile._IMaybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>> parse()
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      result = _2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>.Default;
-      int _285_variablesCount;
-      _285_variablesCount = 0;
-      int _286_clausesCount;
-      _286_clausesCount = 0;
-      Dafny.Sequence<Dafny.Sequence<int>> _287_clauses;
-      _287_clauses = Dafny.Sequence<Dafny.Sequence<int>>.FromElements();
-      int[] _288_clause;
-      var _nw0 = new int[(int)(new BigInteger(1000))];
-      _288_clause = _nw0;
-      int _289_clauseLength;
-      _289_clauseLength = 0;
-      bool _290_ok;
-      _290_ok = false;
-      int _291_literalsCount;
-      _291_literalsCount = 0;
-      int _292_contentLength;
-      _292_contentLength = (int)(_this.content).Length;
-      while ((_this.cursor) < (_292_contentLength)) {
-        int _293_oldCursor;
-        _293_oldCursor = _this.cursor;
-        if (((_this.content)[(int)(_this.cursor)]) == ('c')) {
-          (_this).skipLine();
-        } else if ((((_this.content)[(int)(_this.cursor)]) == ('p')) && ((_285_variablesCount) == (0))) {
-          (_this).toNextNumber();
-          _2_MyDatatypes_Compile.Maybe<int> _294_x;
-          _2_MyDatatypes_Compile.Maybe<int> _out0;
-          (_this).extractNumber(out _out0);
-          _294_x = _out0;
-          _2_MyDatatypes_Compile.Maybe<int> _source0 = _294_x;
+      MyDatatypes_Compile._IMaybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>> result = MyDatatypes_Compile.Maybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>>.Default();
+      int _3_variablesCount;
+      _3_variablesCount = 0;
+      int _4_clausesCount;
+      _4_clausesCount = 0;
+      Dafny.ISequence<Dafny.ISequence<int>> _5_clauses;
+      _5_clauses = Dafny.Sequence<Dafny.ISequence<int>>.FromElements();
+      int[] _6_clause;
+      int[] _nw0 = new int[Dafny.Helpers.ToIntChecked(Dafny.Helpers.ToIntChecked(new BigInteger(1000), "C# arrays may not be larger than the max 32-bit integer"),"C# array size must not be larger than max 32-bit int")];
+      _6_clause = _nw0;
+      int _7_clauseLength;
+      _7_clauseLength = 0;
+      bool _8_ok;
+      _8_ok = false;
+      int _9_literalsCount;
+      _9_literalsCount = 0;
+      int _10_contentLength;
+      _10_contentLength = (int)(this.content).Length;
+      while ((this.cursor) < (_10_contentLength)) {
+        int _11_oldCursor;
+        _11_oldCursor = this.cursor;
+        if (((this.content)[(int)(this.cursor)]) == ('c')) {
+          (this).skipLine();
+        } else if ((((this.content)[(int)(this.cursor)]) == ('p')) && ((_3_variablesCount) == (0))) {
+          (this).toNextNumber();
+          MyDatatypes_Compile._IMaybe<int> _12_x;
+          MyDatatypes_Compile._IMaybe<int> _out0;
+          _out0 = (this).extractNumber();
+          _12_x = _out0;
+          MyDatatypes_Compile._IMaybe<int> _source0 = _12_x;
           if (_source0.is_Error) {
-            Dafny.Sequence<char> _295_t = ((_2_MyDatatypes_Compile.Maybe_Error<int>)_source0)._a0;
+            Dafny.ISequence<char> _13___mcc_h0 = _source0.dtor_Error_a0;
+            Dafny.ISequence<char> _14_t = _13___mcc_h0;
             {
-              result = @_2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>.create_Error(_295_t);
-              return;
+              result = MyDatatypes_Compile.Maybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>>.create_Error(_14_t);
+              return result;
             }
-          } else  {
-            int _296_number = ((_2_MyDatatypes_Compile.Maybe_Just<int>)_source0).@value;
+          } else {
+            int _15___mcc_h1 = _source0.dtor_value;
+            int _16_number = _15___mcc_h1;
             {
-              if (((0) < (_296_number)) && ((_296_number) < (_0_Int32_Compile.__default.max))) {
-                _285_variablesCount = _296_number;
-                _290_ok = true;
+              if (((0) < (_16_number)) && ((_16_number) < (Int32_Compile.__default.max))) {
+                _3_variablesCount = _16_number;
+                _8_ok = true;
               } else {
-                result = @_2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("Variables count is bigger than Int32.max"));
-                return;
+                result = MyDatatypes_Compile.Maybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("Variables count is bigger than Int32.max"));
+                return result;
               }
             }
           }
-          (_this).toNextNumber();
-          _2_MyDatatypes_Compile.Maybe<int> _out1;
-          (_this).extractNumber(out _out1);
-          _294_x = _out1;
-_2_MyDatatypes_Compile.Maybe<int> _source1 = _294_x;
+          (this).toNextNumber();
+          MyDatatypes_Compile._IMaybe<int> _out1;
+          _out1 = (this).extractNumber();
+          _12_x = _out1;
+          MyDatatypes_Compile._IMaybe<int> _source1 = _12_x;
           if (_source1.is_Error) {
-            Dafny.Sequence<char> _297_t = ((_2_MyDatatypes_Compile.Maybe_Error<int>)_source1)._a0;
+            Dafny.ISequence<char> _17___mcc_h2 = _source1.dtor_Error_a0;
+            Dafny.ISequence<char> _18_t = _17___mcc_h2;
             {
-              result = @_2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>.create_Error(_297_t);
-              return;
+              result = MyDatatypes_Compile.Maybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>>.create_Error(_18_t);
+              return result;
             }
-          } else  {
-            int _298_number = ((_2_MyDatatypes_Compile.Maybe_Just<int>)_source1).@value;
+          } else {
+            int _19___mcc_h3 = _source1.dtor_value;
+            int _20_number = _19___mcc_h3;
             {
-              _286_clausesCount = _298_number;
+              _4_clausesCount = _20_number;
             }
           }
-          (_this).skipLine();
-        } else if (((_this.content)[(int)(_this.cursor)]) == ('p')) {
-          result = @_2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("Twice p? what are you doing?"));
-          return;
-        } else if (_290_ok) {
-          (_this).toNextNumber();
-          if (((_289_clauseLength) == (0)) && ((_this.cursor) == (_292_contentLength))) {
+          (this).skipLine();
+        } else if (((this.content)[(int)(this.cursor)]) == ('p')) {
+          result = MyDatatypes_Compile.Maybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("Twice p? what are you doing?"));
+          return result;
+        } else if (_8_ok) {
+          (this).toNextNumber();
+          if (((_7_clauseLength) == (0)) && ((this.cursor) == (_10_contentLength))) {
             goto after_0;
           }
-          _2_MyDatatypes_Compile.Maybe<int> _299_x;
-          _2_MyDatatypes_Compile.Maybe<int> _out2;
-          (_this).extractNumber(out _out2);
-          _299_x = _out2;
-          _2_MyDatatypes_Compile.Maybe<int> _source2 = _299_x;
+          MyDatatypes_Compile._IMaybe<int> _21_x;
+          MyDatatypes_Compile._IMaybe<int> _out2;
+          _out2 = (this).extractNumber();
+          _21_x = _out2;
+          MyDatatypes_Compile._IMaybe<int> _source2 = _21_x;
           if (_source2.is_Error) {
-            Dafny.Sequence<char> _300_t = ((_2_MyDatatypes_Compile.Maybe_Error<int>)_source2)._a0;
+            Dafny.ISequence<char> _22___mcc_h4 = _source2.dtor_Error_a0;
+            Dafny.ISequence<char> _23_t = _22___mcc_h4;
             {
-              result = @_2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>.create_Error(_300_t);
-              return;
+              result = MyDatatypes_Compile.Maybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>>.create_Error(_23_t);
+              return result;
             }
-          } else  {
-            int _301_number = ((_2_MyDatatypes_Compile.Maybe_Just<int>)_source2).@value;
+          } else {
+            int _24___mcc_h5 = _source2.dtor_value;
+            int _25_number = _24___mcc_h5;
             {
-              if (((_301_number) == (0)) && ((_289_clauseLength) > (0))) {
-                _287_clauses = (_287_clauses).Concat(Dafny.Sequence<Dafny.Sequence<int>>.FromElements(Dafny.Helpers.SeqFromArray(_288_clause).Take(_289_clauseLength)));
-                if (((_0_Int32_Compile.__default.max) - (_289_clauseLength)) > (_291_literalsCount)) {
-                  _291_literalsCount = (_291_literalsCount) + (_289_clauseLength);
+              if (((_25_number) == (0)) && ((_7_clauseLength) > (0))) {
+                _5_clauses = Dafny.Sequence<Dafny.ISequence<int>>.Concat(_5_clauses, Dafny.Sequence<Dafny.ISequence<int>>.FromElements(Dafny.Helpers.SeqFromArray(_6_clause).Take(_7_clauseLength)));
+                if (((Int32_Compile.__default.max) - (_7_clauseLength)) > (_9_literalsCount)) {
+                  _9_literalsCount = (_9_literalsCount) + (_7_clauseLength);
                 } else {
-                  result = @_2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("The number of literals is to big"));
-                  return;
+                  result = MyDatatypes_Compile.Maybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("The number of literals is to big"));
+                  return result;
                 }
-                _289_clauseLength = 0;
-              } else if ((_301_number) != (0)) {
-                if ((_289_clauseLength) < (1000)) {
-                  if ((((_301_number) < (0)) && (((0) < ((0) - (_301_number))) && (((0) - (_301_number)) <= (_285_variablesCount)))) || (((_301_number) > (0)) && (((0) < (_301_number)) && ((_301_number) <= (_285_variablesCount))))) {
-                    (_288_clause)[(int)((_289_clauseLength))] = _301_number;
-                    _289_clauseLength = (_289_clauseLength) + (1);
-                    int _302_k;
-                    _302_k = (_289_clauseLength) - (1);
-                    while (((0) < (_302_k)) && (((_288_clause)[(int)((_302_k) - (1))]) > ((_288_clause)[(int)(_302_k)]))) {
-                      int _303_aux;
-                      _303_aux = (_288_clause)[(int)(_302_k)];
-                      (_288_clause)[(int)((_302_k))] = (_288_clause)[(int)((_302_k) - (1))];
-                      var _index0 = (_302_k) - (1);
-                      (_288_clause)[(int)(_index0)] = _303_aux;
-                      _302_k = (_302_k) - (1);
+                _7_clauseLength = 0;
+              } else if ((_25_number) != (0)) {
+                if ((_7_clauseLength) < (1000)) {
+                  if ((((_25_number) < (0)) && (((0) < ((0) - (_25_number))) && (((0) - (_25_number)) <= (_3_variablesCount)))) || (((_25_number) > (0)) && (((0) < (_25_number)) && ((_25_number) <= (_3_variablesCount))))) {
+                    (_6_clause)[(int)((_7_clauseLength))] = _25_number;
+                    _7_clauseLength = (_7_clauseLength) + (1);
+                    int _26_k;
+                    _26_k = (_7_clauseLength) - (1);
+                    while (((0) < (_26_k)) && (((_6_clause)[(int)((_26_k) - (1))]) > ((_6_clause)[(int)(_26_k)]))) {
+                      int _27_aux;
+                      _27_aux = (_6_clause)[(int)(_26_k)];
+                      (_6_clause)[(int)((_26_k))] = (_6_clause)[(int)((_26_k) - (1))];
+                      var _index0 = (_26_k) - (1);
+                      (_6_clause)[(int)(_index0)] = _27_aux;
+                      _26_k = (_26_k) - (1);
                     }
-                    if (((_302_k) > (0)) && (((_288_clause)[(int)((_302_k) - (1))]) == ((_288_clause)[(int)(_302_k)]))) {
-                      result = @_2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("duplice literal in clause"));
-                      return;
+                    if (((_26_k) > (0)) && (((_6_clause)[(int)((_26_k) - (1))]) == ((_6_clause)[(int)(_26_k)]))) {
+                      result = MyDatatypes_Compile.Maybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("duplice literal in clause"));
+                      return result;
                     }
                   } else {
-                    result = @_2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("literal bigger than variablesCount"));
-                    return;
+                    result = MyDatatypes_Compile.Maybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("literal bigger than variablesCount"));
+                    return result;
                   }
                 } else {
-                  result = @_2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("clause longer than 1000"));
-                  return;
+                  result = MyDatatypes_Compile.Maybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("clause longer than 1000"));
+                  return result;
                 }
               }
             }
           }
         }
-        if (((_this.cursor) < (_292_contentLength)) && ((_293_oldCursor) == (_this.cursor))) {
-          (_this).cursor = (_this.cursor) + (1);
+        if (((this.cursor) < (_10_contentLength)) && ((_11_oldCursor) == (this.cursor))) {
+          (this).cursor = (this.cursor) + (1);
         }
+      continue_0: ;
       }
     after_0: ;
-      if (!(((new BigInteger(0)) < (new BigInteger((_287_clauses).Count))) && ((new BigInteger((_287_clauses).Count)) < (new BigInteger(_0_Int32_Compile.__default.max))))) {
-        result = @_2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("number of clauses incorrect"));
-        return;
+      if (!(((new BigInteger((_5_clauses).Count)).Sign == 1) && ((new BigInteger((_5_clauses).Count)) < (new BigInteger(Int32_Compile.__default.max))))) {
+        result = MyDatatypes_Compile.Maybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("number of clauses incorrect"));
+        return result;
       }
-      if ((new BigInteger((_287_clauses).Count)) != (new BigInteger(_286_clausesCount))) {
-        result = @_2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("different number of clauses"));
-        return;
+      if ((new BigInteger((_5_clauses).Count)) != (new BigInteger(_4_clausesCount))) {
+        result = MyDatatypes_Compile.Maybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("different number of clauses"));
+        return result;
       }
-      if (_290_ok) {
-        result = @_2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>.create_Just(@_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>.create(_285_variablesCount, _287_clauses));
-        return;
+      if (_8_ok) {
+        result = MyDatatypes_Compile.Maybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>>.create_Just(_System.Tuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>.create(_3_variablesCount, _5_clauses));
+        return result;
       } else {
-        result = @_2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("p not found"));
-        return;
+        result = MyDatatypes_Compile.Maybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("p not found"));
+        return result;
       }
+      return result;
     }
   }
 
-} // end of namespace _8_Useless_Compile
+} // end of namespace Useless_Compile
 namespace FileInput {
 
-  public partial class Reader {
-  }
 
 } // end of namespace FileInput
-namespace _14_Input_Compile {
-
-
-
-
-
+namespace Input_Compile {
 
   public partial class __default {
-    public static void getInput(out _2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>> result)
+    public static MyDatatypes_Compile._IMaybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>> getInput()
     {
-    TAIL_CALL_START: ;
-      result = _2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>.Default;
-      char[] _304_input;
-      _304_input = FileInput.Reader.getContent();
-      if (((new BigInteger(0)) < (new BigInteger((_304_input).Length))) && ((new BigInteger((_304_input).Length)) < (new BigInteger(_0_Int32_Compile.__default.max)))) {
-        _8_Useless_Compile.Parser _305_parser;
-        var _nw1 = new _8_Useless_Compile.Parser();
-        _nw1.__ctor(_304_input);
-        _305_parser = _nw1;
-        _2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>> _306_x;
-        _2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>> _out3;
-        (_305_parser).parse(out _out3);
-        _306_x = _out3;
-        result = _306_x;
-        return;
+      MyDatatypes_Compile._IMaybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>> result = MyDatatypes_Compile.Maybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>>.Default();
+      char[] _28_input;
+      _28_input = FileInput.Reader.getContent();
+      if (((new BigInteger((_28_input).Length)).Sign == 1) && ((new BigInteger((_28_input).Length)) < (new BigInteger(Int32_Compile.__default.max)))) {
+        Useless_Compile.Parser _29_parser;
+        Useless_Compile.Parser _nw1 = new Useless_Compile.Parser();
+        _nw1.__ctor(_28_input);
+        _29_parser = _nw1;
+        MyDatatypes_Compile._IMaybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>> _30_x;
+        MyDatatypes_Compile._IMaybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>> _out3;
+        _out3 = (_29_parser).parse();
+        _30_x = _out3;
+        result = _30_x;
+        return result;
       } else {
-        result = @_2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("the file contains more data than Int32.max"));
-        return;
+        result = MyDatatypes_Compile.Maybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>>.create_Error(Dafny.Sequence<char>.FromString("the file contains more data than Int32.max"));
+        return result;
       }
+      return result;
     }
     public static BigInteger getTimestamp() {
       return FileInput.Reader.getTimestamp();
     }
   }
-} // end of namespace _14_Input_Compile
-namespace _16_Utils_Compile {
-
+} // end of namespace Input_Compile
+namespace Utils_Compile {
 
   public partial class __default {
-    public static void newInitializedSeq(int n, int d, out int[] r)
+    public static int[] newInitializedSeq(int n, int d)
     {
-    TAIL_CALL_START: ;
-      r = new int[0];
-      var _nw2 = new int[(int)(n)];
+      int[] r = new int[0];
+      int[] _nw2 = new int[Dafny.Helpers.ToIntChecked(Dafny.Helpers.ToIntChecked(n, "C# arrays may not be larger than the max 32-bit integer"),"C# array size must not be larger than max 32-bit int")];
       r = _nw2;
-      int _307_index;
-      _307_index = 0;
-      while ((_307_index) < (n)) {
-        (r)[(int)((_307_index))] = d;
-        _307_index = (_307_index) + (1);
+      int _31_index;
+      _31_index = 0;
+      while ((_31_index) < (n)) {
+        (r)[(int)((_31_index))] = d;
+        _31_index = (_31_index) + (1);
       }
+      return r;
     }
     public static int abs(int literal) {
       if ((literal) < (0)) {
         return (0) - (literal);
-      } else  {
+      } else {
         return literal;
       }
     }
   }
-} // end of namespace _16_Utils_Compile
+} // end of namespace Utils_Compile
 namespace _module {
 
   public partial class __default {
-    public static void Main()
+    public static void _Main()
     {
-    TAIL_CALL_START: ;
-      BigInteger _308_starttime;
-      _308_starttime = _14_Input_Compile.__default.getTimestamp();
-      _2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>> _309_input;
-      _2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>> _out4;
-      _14_Input_Compile.__default.getInput(out _out4);
-      _309_input = _out4;
-      Dafny.BigRational _310_totalTime;
-      _310_totalTime = (new Dafny.BigRational(((_14_Input_Compile.__default.getTimestamp()) - (_308_starttime)), BigInteger.One)) / (new Dafny.BigRational(BigInteger.Parse("1000"), BigInteger.One));
+      BigInteger _32_starttime;
+      _32_starttime = Input_Compile.__default.getTimestamp();
+      MyDatatypes_Compile._IMaybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>> _33_input;
+      MyDatatypes_Compile._IMaybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>> _out4;
+      _out4 = Input_Compile.__default.getInput();
+      _33_input = _out4;
+      Dafny.BigRational _34_totalTime;
+      _34_totalTime = (new Dafny.BigRational(((Input_Compile.__default.getTimestamp()) - (_32_starttime)), BigInteger.One)) / (new Dafny.BigRational(BigInteger.Parse("1000"), BigInteger.One));
       Dafny.Helpers.Print(Dafny.Sequence<char>.FromString("c Time to read: "));
-      Dafny.Helpers.Print(_310_totalTime);
+      Dafny.Helpers.Print(_34_totalTime);
       Dafny.Helpers.Print(Dafny.Sequence<char>.FromString("s\n"));
-      _2_MyDatatypes_Compile.Maybe<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>> _source3 = _309_input;
+      MyDatatypes_Compile._IMaybe<_System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>>> _source3 = _33_input;
       if (_source3.is_Error) {
-        Dafny.Sequence<char> _311_m = ((_2_MyDatatypes_Compile.Maybe_Error<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>)_source3)._a0;
+        Dafny.ISequence<char> _35___mcc_h0 = _source3.dtor_Error_a0;
+        Dafny.ISequence<char> _36_m = _35___mcc_h0;
         Dafny.Helpers.Print(Dafny.Sequence<char>.FromString("c Error: "));
-        Dafny.Helpers.Print(_311_m);
+        Dafny.Helpers.Print(_36_m);
         Dafny.Helpers.Print(Dafny.Sequence<char>.FromString("\n"));
-      } else  {
-        _System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>> _312_z = ((_2_MyDatatypes_Compile.Maybe_Just<_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>>)_source3).@value;
-        _System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>> _let_tmp_rhs0 = _312_z;
-        int _313_variablesCount = ((_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>)_let_tmp_rhs0)._0;
-        Dafny.Sequence<Dafny.Sequence<int>> _314_clauses = ((_System.Tuple2<int,Dafny.Sequence<Dafny.Sequence<int>>>)_let_tmp_rhs0)._1;
-        _308_starttime = _14_Input_Compile.__default.getTimestamp();
-        Formula _315_formula;
-        var _nw3 = new Formula();
-        _nw3.__ctor(_313_variablesCount, _314_clauses);
-        _315_formula = _nw3;
-        SATSolver _316_solver;
-        var _nw4 = new SATSolver();
-        _nw4.__ctor(_315_formula);
-        _316_solver = _nw4;
-        _310_totalTime = (new Dafny.BigRational(((_14_Input_Compile.__default.getTimestamp()) - (_308_starttime)), BigInteger.One)) / (new Dafny.BigRational(BigInteger.Parse("1000"), BigInteger.One));
+      } else {
+        _System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>> _37___mcc_h1 = _source3.dtor_value;
+        _System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>> _38_z = _37___mcc_h1;
+        _System._ITuple2<int, Dafny.ISequence<Dafny.ISequence<int>>> _let_tmp_rhs0 = _38_z;
+        int _39_variablesCount = _let_tmp_rhs0.dtor__0;
+        Dafny.ISequence<Dafny.ISequence<int>> _40_clauses = _let_tmp_rhs0.dtor__1;
+        _32_starttime = Input_Compile.__default.getTimestamp();
+        Formula _41_formula;
+        Formula _nw3 = new Formula();
+        _nw3.__ctor(_39_variablesCount, _40_clauses);
+        _41_formula = _nw3;
+        SATSolver _42_solver;
+        SATSolver _nw4 = new SATSolver();
+        _nw4.__ctor(_41_formula);
+        _42_solver = _nw4;
+        _34_totalTime = (new Dafny.BigRational(((Input_Compile.__default.getTimestamp()) - (_32_starttime)), BigInteger.One)) / (new Dafny.BigRational(BigInteger.Parse("1000"), BigInteger.One));
         Dafny.Helpers.Print(Dafny.Sequence<char>.FromString("c Time to initialize: "));
-        Dafny.Helpers.Print(_310_totalTime);
+        Dafny.Helpers.Print(_34_totalTime);
         Dafny.Helpers.Print(Dafny.Sequence<char>.FromString("s\n"));
-        _308_starttime = _14_Input_Compile.__default.getTimestamp();
-        SAT__UNSAT _317_solution;
-        SAT__UNSAT _out5;
-        (_316_solver).start(out _out5);
-        _317_solution = _out5;
-        _310_totalTime = (new Dafny.BigRational(((_14_Input_Compile.__default.getTimestamp()) - (_308_starttime)), BigInteger.One)) / (new Dafny.BigRational(BigInteger.Parse("1000"), BigInteger.One));
+        _32_starttime = Input_Compile.__default.getTimestamp();
+        _ISAT__UNSAT _43_solution;
+        _ISAT__UNSAT _out5;
+        _out5 = (_42_solver).start();
+        _43_solution = _out5;
+        _34_totalTime = (new Dafny.BigRational(((Input_Compile.__default.getTimestamp()) - (_32_starttime)), BigInteger.One)) / (new Dafny.BigRational(BigInteger.Parse("1000"), BigInteger.One));
         Dafny.Helpers.Print(Dafny.Sequence<char>.FromString("c Time to solve: "));
-        Dafny.Helpers.Print(_310_totalTime);
+        Dafny.Helpers.Print(_34_totalTime);
         Dafny.Helpers.Print(Dafny.Sequence<char>.FromString("s\n"));
-        SAT__UNSAT _source4 = _317_solution;
+        _ISAT__UNSAT _source4 = _43_solution;
         if (_source4.is_SAT) {
-          Dafny.Sequence<int> _318_x = ((SAT__UNSAT_SAT)_source4).tau;
+          Dafny.ISequence<int> _44___mcc_h2 = _source4.dtor_tau;
+          Dafny.ISequence<int> _45_x = _44___mcc_h2;
           Dafny.Helpers.Print(Dafny.Sequence<char>.FromString("s SATISFIABLE\n"));
-        } else  {
+        } else {
           Dafny.Helpers.Print(Dafny.Sequence<char>.FromString("s UNSATISFIABLE\n"));
         }
       }
     }
   }
 
-
-  public abstract class SAT__UNSAT {
+  public interface _ISAT__UNSAT {
+    bool is_SAT { get; }
+    bool is_UNSAT { get; }
+    Dafny.ISequence<int> dtor_tau { get; }
+    _ISAT__UNSAT DowncastClone();
+  }
+  public abstract class SAT__UNSAT : _ISAT__UNSAT {
     public SAT__UNSAT() { }
-    static SAT__UNSAT theDefault;
-    public static SAT__UNSAT Default {
-      get {
-        if (theDefault == null) {
-          theDefault = new SAT__UNSAT_SAT(Dafny.Sequence<int>.Empty);
-        }
-        return theDefault;
-      }
+    private static readonly _ISAT__UNSAT theDefault = create_SAT(Dafny.Sequence<int>.Empty);
+    public static _ISAT__UNSAT Default() {
+      return theDefault;
     }
-    public static SAT__UNSAT _DafnyDefaultValue() { return Default; }
-    public static SAT__UNSAT create_SAT(Dafny.Sequence<int> tau) {
+    private static readonly Dafny.TypeDescriptor<_ISAT__UNSAT> _TYPE = new Dafny.TypeDescriptor<_ISAT__UNSAT>(SAT__UNSAT.Default());
+    public static Dafny.TypeDescriptor<_ISAT__UNSAT> _TypeDescriptor() {
+      return _TYPE;
+    }
+    public static _ISAT__UNSAT create_SAT(Dafny.ISequence<int> tau) {
       return new SAT__UNSAT_SAT(tau);
     }
-    public static SAT__UNSAT create_UNSAT() {
+    public static _ISAT__UNSAT create_UNSAT() {
       return new SAT__UNSAT_UNSAT();
     }
     public bool is_SAT { get { return this is SAT__UNSAT_SAT; } }
     public bool is_UNSAT { get { return this is SAT__UNSAT_UNSAT; } }
-    public Dafny.Sequence<int> dtor_tau {
+    public Dafny.ISequence<int> dtor_tau {
       get {
         var d = this;
-        return ((SAT__UNSAT_SAT)d).tau; 
+        return ((SAT__UNSAT_SAT)d).tau;
       }
     }
+    public abstract _ISAT__UNSAT DowncastClone();
   }
   public class SAT__UNSAT_SAT : SAT__UNSAT {
-    public readonly Dafny.Sequence<int> tau;
-    public SAT__UNSAT_SAT(Dafny.Sequence<int> tau) {
+    public readonly Dafny.ISequence<int> tau;
+    public SAT__UNSAT_SAT(Dafny.ISequence<int> tau) {
       this.tau = tau;
+    }
+    public override _ISAT__UNSAT DowncastClone() {
+      if (this is _ISAT__UNSAT dt) { return dt; }
+      return new SAT__UNSAT_SAT(tau);
     }
     public override bool Equals(object other) {
       var oth = other as SAT__UNSAT_SAT;
-      return oth != null && Dafny.Helpers.AreEqual(this.tau, oth.tau);
+      return oth != null && object.Equals(this.tau, oth.tau);
     }
     public override int GetHashCode() {
       ulong hash = 5381;
@@ -4275,6 +4684,10 @@ namespace _module {
   public class SAT__UNSAT_UNSAT : SAT__UNSAT {
     public SAT__UNSAT_UNSAT() {
     }
+    public override _ISAT__UNSAT DowncastClone() {
+      if (this is _ISAT__UNSAT dt) { return dt; }
+      return new SAT__UNSAT_UNSAT();
+    }
     public override bool Equals(object other) {
       var oth = other as SAT__UNSAT_UNSAT;
       return oth != null;
@@ -4291,88 +4704,94 @@ namespace _module {
   }
 
   public partial class SATSolver {
-    public Formula formula = default(Formula);
+    public SATSolver() {
+      this.formula = default(Formula);
+    }
+    public  Formula formula {get; set;}
     public void __ctor(Formula f_k)
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      (_this).formula = f_k;
+      (this).formula = f_k;
     }
-    public void step(int literal, bool @value, out SAT__UNSAT result)
+    public _ISAT__UNSAT step(int literal, bool @value)
     {
-      result = SAT__UNSAT.Default;
+      _ISAT__UNSAT result = SAT__UNSAT.Default();
       (this.formula).increaseDecisionLevel();
       (this.formula).setLiteral(literal, @value);
-      SAT__UNSAT _out6;
-      (this).solve(out _out6);
+      _ISAT__UNSAT _out6;
+      _out6 = (this).solve();
       result = _out6;
       (this.formula).revertLastDecisionLevel();
-      { }
       result = result;
-      return;
+      return result;
+      return result;
     }
-    public void solve(out SAT__UNSAT result)
+    public _ISAT__UNSAT solve()
     {
-      result = SAT__UNSAT.Default;
-      bool _319_hasEmptyClause;
+      _ISAT__UNSAT result = SAT__UNSAT.Default();
+      bool _46_hasEmptyClause;
       bool _out7;
-      (this.formula).getHasEmptyClause(out _out7);
-      _319_hasEmptyClause = _out7;
-      if (_319_hasEmptyClause) {
-        { }
-        result = @SAT__UNSAT.create_UNSAT();
-        return;
+      _out7 = (this.formula).getHasEmptyClause();
+      _46_hasEmptyClause = _out7;
+      if (_46_hasEmptyClause) {
+        result = SAT__UNSAT.create_UNSAT();
+        return result;
       }
-      bool _320_isEmpty;
+      bool _47_isEmpty;
       bool _out8;
-      (this.formula).getIsEmpty(out _out8);
-      _320_isEmpty = _out8;
-      if (_320_isEmpty) {
-        { }
-        result = @SAT__UNSAT.create_SAT(Dafny.Helpers.SeqFromArray(this.formula.truthAssignment));
-        { }
+      _out8 = (this.formula).getIsEmpty();
+      _47_isEmpty = _out8;
+      if (_47_isEmpty) {
+        result = SAT__UNSAT.create_SAT(Dafny.Helpers.SeqFromArray(this.formula.truthAssignment));
         result = result;
-        return;
+        return result;
       }
-      int _321_literal;
+      int _48_literal;
       int _out9;
-      (this.formula).chooseLiteral(out _out9);
-      _321_literal = _out9;
-      { }
-      SAT__UNSAT _out10;
-      (this).step(_321_literal, true, out _out10);
+      _out9 = (this.formula).chooseLiteral();
+      _48_literal = _out9;
+      _ISAT__UNSAT _out10;
+      _out10 = (this).step(_48_literal, true);
       result = _out10;
       if ((result).is_SAT) {
         result = result;
-        return;
+        return result;
       }
-      SAT__UNSAT _out11;
-      (this).step(_321_literal, false, out _out11);
+      _ISAT__UNSAT _out11;
+      _out11 = (this).step(_48_literal, false);
       result = _out11;
-      if ((result).is_UNSAT) {
-        { }
-        { }
-      }
       result = result;
-      return;
+      return result;
+      return result;
     }
-    public void start(out SAT__UNSAT result)
+    public _ISAT__UNSAT start()
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      result = SAT__UNSAT.Default;
-      (_this.formula).level0UnitPropagation();
-      SAT__UNSAT _out12;
-      (_this).solve(out _out12);
+      _ISAT__UNSAT result = SAT__UNSAT.Default();
+      (this.formula).level0UnitPropagation();
+      _ISAT__UNSAT _out12;
+      _out12 = (this).solve();
       result = _out12;
+      return result;
     }
   }
 
-
-
-
   public partial class Formula : DataStructures {
-    public int _variablesCount = 0;
+    public Formula() {
+      this._variablesCount = 0;
+      this._clauses = Dafny.Sequence<Dafny.ISequence<int>>.Empty;
+      this._clausesCount = 0;
+      this._clauseLength = new int[0];
+      this._truthAssignment = new int[0];
+      this._trueLiteralsCount = new int[0];
+      this._falseLiteralsCount = new int[0];
+      this._positiveLiteralsToClauses = new Dafny.ISequence<int>[0];
+      this._negativeLiteralsToClauses = new Dafny.ISequence<int>[0];
+      this._decisionLevel = 0;
+      this._traceVariable = new int[0];
+      this._traceValue = new bool[0];
+      this._traceDLStart = new int[0];
+      this._traceDLEnd = new int[0];
+    }
+    public  int _variablesCount {get; set;}
     public int variablesCount {
       get {
         return this._variablesCount;
@@ -4381,8 +4800,8 @@ namespace _module {
         this._variablesCount = value;
       }
     }
-    public Dafny.Sequence<Dafny.Sequence<int>> _clauses = Dafny.Sequence<Dafny.Sequence<int>>.Empty;
-    public Dafny.Sequence<Dafny.Sequence<int>> clauses {
+    public  Dafny.ISequence<Dafny.ISequence<int>> _clauses {get; set;}
+    public Dafny.ISequence<Dafny.ISequence<int>> clauses {
       get {
         return this._clauses;
       }
@@ -4390,7 +4809,7 @@ namespace _module {
         this._clauses = value;
       }
     }
-    public int _clausesCount = 0;
+    public  int _clausesCount {get; set;}
     public int clausesCount {
       get {
         return this._clausesCount;
@@ -4399,7 +4818,7 @@ namespace _module {
         this._clausesCount = value;
       }
     }
-    public int[] _clauseLength = new int[0];
+    public  int[] _clauseLength {get; set;}
     public int[] clauseLength {
       get {
         return this._clauseLength;
@@ -4408,7 +4827,7 @@ namespace _module {
         this._clauseLength = value;
       }
     }
-    public int[] _truthAssignment = new int[0];
+    public  int[] _truthAssignment {get; set;}
     public int[] truthAssignment {
       get {
         return this._truthAssignment;
@@ -4417,7 +4836,7 @@ namespace _module {
         this._truthAssignment = value;
       }
     }
-    public int[] _trueLiteralsCount = new int[0];
+    public  int[] _trueLiteralsCount {get; set;}
     public int[] trueLiteralsCount {
       get {
         return this._trueLiteralsCount;
@@ -4426,7 +4845,7 @@ namespace _module {
         this._trueLiteralsCount = value;
       }
     }
-    public int[] _falseLiteralsCount = new int[0];
+    public  int[] _falseLiteralsCount {get; set;}
     public int[] falseLiteralsCount {
       get {
         return this._falseLiteralsCount;
@@ -4435,8 +4854,8 @@ namespace _module {
         this._falseLiteralsCount = value;
       }
     }
-    public Dafny.Sequence<int>[] _positiveLiteralsToClauses = new Dafny.Sequence<int>[0];
-    public Dafny.Sequence<int>[] positiveLiteralsToClauses {
+    public  Dafny.ISequence<int>[] _positiveLiteralsToClauses {get; set;}
+    public Dafny.ISequence<int>[] positiveLiteralsToClauses {
       get {
         return this._positiveLiteralsToClauses;
       }
@@ -4444,8 +4863,8 @@ namespace _module {
         this._positiveLiteralsToClauses = value;
       }
     }
-    public Dafny.Sequence<int>[] _negativeLiteralsToClauses = new Dafny.Sequence<int>[0];
-    public Dafny.Sequence<int>[] negativeLiteralsToClauses {
+    public  Dafny.ISequence<int>[] _negativeLiteralsToClauses {get; set;}
+    public Dafny.ISequence<int>[] negativeLiteralsToClauses {
       get {
         return this._negativeLiteralsToClauses;
       }
@@ -4453,7 +4872,7 @@ namespace _module {
         this._negativeLiteralsToClauses = value;
       }
     }
-    public int _decisionLevel = 0;
+    public  int _decisionLevel {get; set;}
     public int decisionLevel {
       get {
         return this._decisionLevel;
@@ -4462,7 +4881,7 @@ namespace _module {
         this._decisionLevel = value;
       }
     }
-    public int[] _traceVariable = new int[0];
+    public  int[] _traceVariable {get; set;}
     public int[] traceVariable {
       get {
         return this._traceVariable;
@@ -4471,7 +4890,7 @@ namespace _module {
         this._traceVariable = value;
       }
     }
-    public bool[] _traceValue = new bool[0];
+    public  bool[] _traceValue {get; set;}
     public bool[] traceValue {
       get {
         return this._traceValue;
@@ -4480,7 +4899,7 @@ namespace _module {
         this._traceValue = value;
       }
     }
-    public int[] _traceDLStart = new int[0];
+    public  int[] _traceDLStart {get; set;}
     public int[] traceDLStart {
       get {
         return this._traceDLStart;
@@ -4489,7 +4908,7 @@ namespace _module {
         this._traceDLStart = value;
       }
     }
-    public int[] _traceDLEnd = new int[0];
+    public  int[] _traceDLEnd {get; set;}
     public int[] traceDLEnd {
       get {
         return this._traceDLEnd;
@@ -4499,207 +4918,167 @@ namespace _module {
       }
     }
     public int getVariableFromLiteral(int literal) {
-      return (_16_Utils_Compile.__default.abs(literal)) - (1);
+      return _Companion_DataStructures.getVariableFromLiteral(this, literal);
     }
-    public _System.Tuple2<int,int> convertLVtoVI(int literal, bool @value)
+    public _System._ITuple2<int, int> convertLVtoVI(int literal, bool @value)
     {
-      int _322_variable = (this).getVariableFromLiteral(literal);
-      int _323_v = (@value) ? (1) : (0);
-      int _324_val = ((literal) < (0)) ? ((1) - (_323_v)) : (_323_v);
-      return @_System.Tuple2<int,int>.create(_322_variable, _324_val);
+      return _Companion_DataStructures.convertLVtoVI(this, literal, @value);
     }
     public bool isUnitClause(int index) {
-      return (((this.trueLiteralsCount)[(int)(index)]) == (0)) && ((((this.clauseLength)[(int)(index)]) - ((this.falseLiteralsCount)[(int)(index)])) == (1));
+      return _Companion_DataStructures.isUnitClause(this, index);
     }
     public bool isEmptyClause(int index) {
-      return ((this.clauseLength)[(int)(index)]) == ((this.falseLiteralsCount)[(int)(index)]);
+      return _Companion_DataStructures.isEmptyClause(this, index);
     }
-    public void __ctor(int variablesCount, Dafny.Sequence<Dafny.Sequence<int>> clauses)
+    public void __ctor(int variablesCount, Dafny.ISequence<Dafny.ISequence<int>> clauses)
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      { }
-      { }
-      { }
-      (_this).variablesCount = variablesCount;
-      (_this).clauses = clauses;
-      (_this).decisionLevel = (0) - (1);
-      var _nw5 = new int[(int)(variablesCount)];
-      (_this).traceVariable = _nw5;
-      var _nw6 = new bool[(int)(variablesCount)];
-      (_this).traceValue = _nw6;
-      var _nw7 = new int[(int)(variablesCount)];
-      (_this).traceDLStart = _nw7;
-      var _nw8 = new int[(int)(variablesCount)];
-      (_this).traceDLEnd = _nw8;
-      { }
-      int _325_clsLength;
-      _325_clsLength = (int)(clauses).Count;
-      (_this).clausesCount = _325_clsLength;
-      var _nw9 = new int[(int)(_325_clsLength)];
-      (_this).clauseLength = _nw9;
-      var _nw10 = new int[(int)(_325_clsLength)];
-      (_this).trueLiteralsCount = _nw10;
-      var _nw11 = new int[(int)(_325_clsLength)];
-      (_this).falseLiteralsCount = _nw11;
-      var _nw12 = Dafny.ArrayHelpers.InitNewArray1<Dafny.Sequence<int>>(Dafny.Sequence<int>.Empty, (variablesCount));
-      (_this).positiveLiteralsToClauses = _nw12;
-      var _nw13 = Dafny.ArrayHelpers.InitNewArray1<Dafny.Sequence<int>>(Dafny.Sequence<int>.Empty, (variablesCount));
-      (_this).negativeLiteralsToClauses = _nw13;
-      var _nw14 = new int[(int)(variablesCount)];
-      (_this).truthAssignment = _nw14;
-      int _326_k;
-      _326_k = 0;
-      while ((_326_k) < (_this.clausesCount)) {
-        var _arr0 = _this.clauseLength;
-        _arr0[(int)((_326_k))] = (int)((_this.clauses).Select(_326_k)).Count;
-        _326_k = (_326_k) + (1);
+      (this)._variablesCount = variablesCount;
+      (this)._clauses = clauses;
+      (this)._decisionLevel = -1;
+      int[] _nw5 = new int[Dafny.Helpers.ToIntChecked(Dafny.Helpers.ToIntChecked(variablesCount, "C# arrays may not be larger than the max 32-bit integer"),"C# array size must not be larger than max 32-bit int")];
+      (this)._traceVariable = _nw5;
+      bool[] _nw6 = new bool[Dafny.Helpers.ToIntChecked(Dafny.Helpers.ToIntChecked(variablesCount, "C# arrays may not be larger than the max 32-bit integer"),"C# array size must not be larger than max 32-bit int")];
+      (this)._traceValue = _nw6;
+      int[] _nw7 = new int[Dafny.Helpers.ToIntChecked(Dafny.Helpers.ToIntChecked(variablesCount, "C# arrays may not be larger than the max 32-bit integer"),"C# array size must not be larger than max 32-bit int")];
+      (this)._traceDLStart = _nw7;
+      int[] _nw8 = new int[Dafny.Helpers.ToIntChecked(Dafny.Helpers.ToIntChecked(variablesCount, "C# arrays may not be larger than the max 32-bit integer"),"C# array size must not be larger than max 32-bit int")];
+      (this)._traceDLEnd = _nw8;
+      int _49_clsLength;
+      _49_clsLength = (int)(clauses).Count;
+      (this)._clausesCount = _49_clsLength;
+      int[] _nw9 = new int[Dafny.Helpers.ToIntChecked(Dafny.Helpers.ToIntChecked(_49_clsLength, "C# arrays may not be larger than the max 32-bit integer"),"C# array size must not be larger than max 32-bit int")];
+      (this)._clauseLength = _nw9;
+      int[] _nw10 = new int[Dafny.Helpers.ToIntChecked(Dafny.Helpers.ToIntChecked(_49_clsLength, "C# arrays may not be larger than the max 32-bit integer"),"C# array size must not be larger than max 32-bit int")];
+      (this)._trueLiteralsCount = _nw10;
+      int[] _nw11 = new int[Dafny.Helpers.ToIntChecked(Dafny.Helpers.ToIntChecked(_49_clsLength, "C# arrays may not be larger than the max 32-bit integer"),"C# array size must not be larger than max 32-bit int")];
+      (this)._falseLiteralsCount = _nw11;
+      Dafny.ISequence<int>[] _nw12 = Dafny.ArrayHelpers.InitNewArray1<Dafny.ISequence<int>>(Dafny.Sequence<int>.Empty, Dafny.Helpers.ToIntChecked(variablesCount, "C# arrays may not be larger than the max 32-bit integer"));
+      (this)._positiveLiteralsToClauses = _nw12;
+      Dafny.ISequence<int>[] _nw13 = Dafny.ArrayHelpers.InitNewArray1<Dafny.ISequence<int>>(Dafny.Sequence<int>.Empty, Dafny.Helpers.ToIntChecked(variablesCount, "C# arrays may not be larger than the max 32-bit integer"));
+      (this)._negativeLiteralsToClauses = _nw13;
+      int[] _nw14 = new int[Dafny.Helpers.ToIntChecked(Dafny.Helpers.ToIntChecked(variablesCount, "C# arrays may not be larger than the max 32-bit integer"),"C# array size must not be larger than max 32-bit int")];
+      (this)._truthAssignment = _nw14;
+      int _50_k;
+      _50_k = 0;
+      while ((_50_k) < (this.clausesCount)) {
+        var _arr0 = this.clauseLength;
+        _arr0[(int)((_50_k))] = (int)((this.clauses).Select(_50_k)).Count;
+        _50_k = (_50_k) + (1);
       }
-      int _327_index;
-      _327_index = 0;
-      while ((_327_index) < (variablesCount)) {
-        var _arr1 = _this.truthAssignment;
-        _arr1[(int)((_327_index))] = (0) - (1);
-        { }
-        { }
-        _327_index = (_327_index) + (1);
+      int _51_index;
+      _51_index = 0;
+      while ((_51_index) < (variablesCount)) {
+        var _arr1 = this.truthAssignment;
+        _arr1[(int)((_51_index))] = -1;
+        _51_index = (_51_index) + (1);
       }
-      (_this).createTFLArrays();
-      (_this).createPositiveLiteralsToClauses();
-      (_this).createNegativeLiteralsToClauses();
-      { }
-      { }
-      { }
+      (this).createTFLArrays();
+      (this).createPositiveLiteralsToClauses();
+      (this).createNegativeLiteralsToClauses();
     }
     public void createTFLArrays()
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      int _328_i;
-      _328_i = 0;
-      while ((_328_i) < (_this.clausesCount)) {
-        { }
-        var _arr2 = _this.trueLiteralsCount;
-        _arr2[(int)((_328_i))] = 0;
-        { }
-        var _arr3 = _this.falseLiteralsCount;
-        _arr3[(int)((_328_i))] = 0;
-        _328_i = (_328_i) + (1);
+      int _52_i;
+      _52_i = 0;
+      while ((_52_i) < (this.clausesCount)) {
+        var _arr2 = this.trueLiteralsCount;
+        _arr2[(int)((_52_i))] = 0;
+        var _arr3 = this.falseLiteralsCount;
+        _arr3[(int)((_52_i))] = 0;
+        _52_i = (_52_i) + (1);
       }
     }
     public void createPositiveLiteralsToClauses()
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      int _329_variable;
-      _329_variable = 0;
-      while ((_329_variable) < (_this.variablesCount)) {
-        var _arr4 = _this.positiveLiteralsToClauses;
-        _arr4[(int)((_329_variable))] = Dafny.Sequence<int>.FromElements();
-        int _330_clauseIndex;
-        _330_clauseIndex = 0;
-        while ((_330_clauseIndex) < (_this.clausesCount)) {
-          if (((_this.clauses).Select(_330_clauseIndex)).Contains((_329_variable) + (1))) {
-            var _arr5 = _this.positiveLiteralsToClauses;
-            _arr5[(int)((_329_variable))] = ((_this.positiveLiteralsToClauses)[(int)(_329_variable)]).Concat(Dafny.Sequence<int>.FromElements(_330_clauseIndex));
+      int _53_variable;
+      _53_variable = 0;
+      while ((_53_variable) < (this.variablesCount)) {
+        var _arr4 = this.positiveLiteralsToClauses;
+        _arr4[(int)((_53_variable))] = Dafny.Sequence<int>.FromElements();
+        int _54_clauseIndex;
+        _54_clauseIndex = 0;
+        while ((_54_clauseIndex) < (this.clausesCount)) {
+          if (((this.clauses).Select(_54_clauseIndex)).Contains(((_53_variable) + (1)))) {
+            var _arr5 = this.positiveLiteralsToClauses;
+            _arr5[(int)((_53_variable))] = Dafny.Sequence<int>.Concat((this.positiveLiteralsToClauses)[(int)(_53_variable)], Dafny.Sequence<int>.FromElements(_54_clauseIndex));
           }
-          _330_clauseIndex = (_330_clauseIndex) + (1);
+          _54_clauseIndex = (_54_clauseIndex) + (1);
         }
-        _329_variable = (_329_variable) + (1);
+        _53_variable = (_53_variable) + (1);
       }
     }
     public void createNegativeLiteralsToClauses()
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      int _331_variable;
-      _331_variable = 0;
-      while ((_331_variable) < (_this.variablesCount)) {
-        var _arr6 = _this.negativeLiteralsToClauses;
-        _arr6[(int)((_331_variable))] = Dafny.Sequence<int>.FromElements();
-        int _332_clauseIndex;
-        _332_clauseIndex = 0;
-        while ((_332_clauseIndex) < (_this.clausesCount)) {
-          if (((_this.clauses).Select(_332_clauseIndex)).Contains(((0) - (_331_variable)) - (1))) {
-            var _arr7 = _this.negativeLiteralsToClauses;
-            _arr7[(int)((_331_variable))] = ((_this.negativeLiteralsToClauses)[(int)(_331_variable)]).Concat(Dafny.Sequence<int>.FromElements(_332_clauseIndex));
+      int _55_variable;
+      _55_variable = 0;
+      while ((_55_variable) < (this.variablesCount)) {
+        var _arr6 = this.negativeLiteralsToClauses;
+        _arr6[(int)((_55_variable))] = Dafny.Sequence<int>.FromElements();
+        int _56_clauseIndex;
+        _56_clauseIndex = 0;
+        while ((_56_clauseIndex) < (this.clausesCount)) {
+          if (((this.clauses).Select(_56_clauseIndex)).Contains((((0) - (_55_variable)) - (1)))) {
+            var _arr7 = this.negativeLiteralsToClauses;
+            _arr7[(int)((_55_variable))] = Dafny.Sequence<int>.Concat((this.negativeLiteralsToClauses)[(int)(_55_variable)], Dafny.Sequence<int>.FromElements(_56_clauseIndex));
           }
-          _332_clauseIndex = (_332_clauseIndex) + (1);
+          _56_clauseIndex = (_56_clauseIndex) + (1);
         }
-        _331_variable = (_331_variable) + (1);
+        _55_variable = (_55_variable) + (1);
       }
     }
     public void revertLastDecisionLevel()
     {
-      { }
       while (((this.traceDLStart)[(int)(this.decisionLevel)]) < ((this.traceDLEnd)[(int)(this.decisionLevel)])) {
         (this).removeLastVariable();
-        { }
       }
       (this).decisionLevel = (this.decisionLevel) - (1);
-      { }
     }
     public void removeLastVariable()
     {
-      { }
-      int _333_k;
-      _333_k = ((this.traceDLEnd)[(int)(this.decisionLevel)]) - (1);
-      int _334_variable;
-      _334_variable = (this.traceVariable)[(int)(_333_k)];
-      bool _335_value;
-      _335_value = (this.traceValue)[(int)(_333_k)];
-      { }
+      int _57_k;
+      _57_k = ((this.traceDLEnd)[(int)(this.decisionLevel)]) - (1);
+      int _58_variable;
+      _58_variable = (this.traceVariable)[(int)(_57_k)];
+      bool _59_value;
+      _59_value = (this.traceValue)[(int)(_57_k)];
       var _arr8 = this.traceDLEnd;
       var _index1 = this.decisionLevel;
-      _arr8[(int)(_index1)] = _333_k;
-      { }
+      _arr8[(int)(_index1)] = _57_k;
       var _arr9 = this.truthAssignment;
-      _arr9[(int)((_334_variable))] = (0) - (1);
-      { }
-      { }
-      { }
-      { }
-      Dafny.Sequence<int> _336_positivelyImpactedClauses;
-      _336_positivelyImpactedClauses = (this.positiveLiteralsToClauses)[(int)(_334_variable)];
-      Dafny.Sequence<int> _337_negativelyImpactedClauses;
-      _337_negativelyImpactedClauses = (this.negativeLiteralsToClauses)[(int)(_334_variable)];
-      if (!(_335_value)) {
-        _337_negativelyImpactedClauses = (this.positiveLiteralsToClauses)[(int)(_334_variable)];
-        _336_positivelyImpactedClauses = (this.negativeLiteralsToClauses)[(int)(_334_variable)];
+      _arr9[(int)((_58_variable))] = -1;
+      Dafny.ISequence<int> _60_positivelyImpactedClauses;
+      _60_positivelyImpactedClauses = (this.positiveLiteralsToClauses)[(int)(_58_variable)];
+      Dafny.ISequence<int> _61_negativelyImpactedClauses;
+      _61_negativelyImpactedClauses = (this.negativeLiteralsToClauses)[(int)(_58_variable)];
+      if (!(_59_value)) {
+        _61_negativelyImpactedClauses = (this.positiveLiteralsToClauses)[(int)(_58_variable)];
+        _60_positivelyImpactedClauses = (this.negativeLiteralsToClauses)[(int)(_58_variable)];
       }
-      { }
-      { }
-      { }
-      int _338_i;
-      _338_i = 0;
-      int _339_len;
-      _339_len = (int)(_336_positivelyImpactedClauses).Count;
-      while ((_338_i) < (_339_len)) {
-        int _340_clauseIndex;
-        _340_clauseIndex = (_336_positivelyImpactedClauses).Select(_338_i);
-        { }
-        { }
-        { }
+      int _62_i;
+      _62_i = 0;
+      int _63_len;
+      _63_len = (int)(_60_positivelyImpactedClauses).Count;
+      while ((_62_i) < (_63_len)) {
+        int _64_clauseIndex;
+        _64_clauseIndex = (_60_positivelyImpactedClauses).Select(_62_i);
         var _arr10 = this.trueLiteralsCount;
-        _arr10[(int)((_340_clauseIndex))] = ((this.trueLiteralsCount)[(int)(_340_clauseIndex)]) - (1);
-        _338_i = (_338_i) + (1);
+        _arr10[(int)((_64_clauseIndex))] = ((this.trueLiteralsCount)[(int)(_64_clauseIndex)]) - (1);
+        _62_i = (_62_i) + (1);
       }
-      _338_i = 0;
-      _339_len = (int)(_337_negativelyImpactedClauses).Count;
-      while ((_338_i) < (_339_len)) {
-        int _341_clauseIndex;
-        _341_clauseIndex = (_337_negativelyImpactedClauses).Select(_338_i);
-        { }
-        var _arr11 = this.falseLiteralsCount;
-        _arr11[(int)((_341_clauseIndex))] = ((this.falseLiteralsCount)[(int)(_341_clauseIndex)]) - (1);
-        _338_i = (_338_i) + (1);
+      _62_i = 0;
+      _63_len = (int)(_61_negativelyImpactedClauses).Count;
+      {
+        while ((_62_i) < (_63_len)) {
+          int _65_clauseIndex;
+          _65_clauseIndex = (_61_negativelyImpactedClauses).Select(_62_i);
+          var _arr11 = this.falseLiteralsCount;
+          _arr11[(int)((_65_clauseIndex))] = ((this.falseLiteralsCount)[(int)(_65_clauseIndex)]) - (1);
+          _62_i = (_62_i) + (1);
+        }
       }
-      { }
     }
     public void setVariable(int variable, bool @value)
     {
-      { }
-      { }
       (this).addAssignment(variable, @value);
       if (@value) {
         var _arr12 = this.truthAssignment;
@@ -4708,286 +5087,258 @@ namespace _module {
         var _arr13 = this.truthAssignment;
         _arr13[(int)((variable))] = 0;
       }
-      { }
-      { }
-      { }
-      { }
-      { }
-      { }
-      { }
-      int _342_i;
-      _342_i = 0;
-      Dafny.Sequence<int> _343_impactedClauses;
-      _343_impactedClauses = (this.positiveLiteralsToClauses)[(int)(variable)];
-      Dafny.Sequence<int> _344_impactedClauses_k;
-      _344_impactedClauses_k = (this.negativeLiteralsToClauses)[(int)(variable)];
+      int _66_i;
+      _66_i = 0;
+      Dafny.ISequence<int> _67_impactedClauses;
+      _67_impactedClauses = (this.positiveLiteralsToClauses)[(int)(variable)];
+      Dafny.ISequence<int> _68_impactedClauses_k;
+      _68_impactedClauses_k = (this.negativeLiteralsToClauses)[(int)(variable)];
       if (!(@value)) {
-        _343_impactedClauses = (this.negativeLiteralsToClauses)[(int)(variable)];
-        _344_impactedClauses_k = (this.positiveLiteralsToClauses)[(int)(variable)];
+        _67_impactedClauses = (this.negativeLiteralsToClauses)[(int)(variable)];
+        _68_impactedClauses_k = (this.positiveLiteralsToClauses)[(int)(variable)];
       }
-      { }
-      int _345_impactedClausesLen;
-      _345_impactedClausesLen = (int)(_343_impactedClauses).Count;
-      while ((_342_i) < (_345_impactedClausesLen)) {
-        int _346_clauseIndex;
-        _346_clauseIndex = (_343_impactedClauses).Select(_342_i);
-        { }
-        { }
+      int _69_impactedClausesLen;
+      _69_impactedClausesLen = (int)(_67_impactedClauses).Count;
+      while ((_66_i) < (_69_impactedClausesLen)) {
+        int _70_clauseIndex;
+        _70_clauseIndex = (_67_impactedClauses).Select(_66_i);
         var _arr14 = this.trueLiteralsCount;
-        _arr14[(int)((_346_clauseIndex))] = ((this.trueLiteralsCount)[(int)(_346_clauseIndex)]) + (1);
-        { }
-        { }
-        _342_i = (_342_i) + (1);
+        _arr14[(int)((_70_clauseIndex))] = ((this.trueLiteralsCount)[(int)(_70_clauseIndex)]) + (1);
+        _66_i = (_66_i) + (1);
       }
-      { }
-      int _347_i_k;
-      _347_i_k = 0;
-      int _348_impactedClausesLen_k;
-      _348_impactedClausesLen_k = (int)(_344_impactedClauses_k).Count;
-      while ((_347_i_k) < (_348_impactedClausesLen_k)) {
-        int _349_clauseIndex;
-        _349_clauseIndex = (_344_impactedClauses_k).Select(_347_i_k);
-        { }
-        { }
+      int _71_i_k;
+      _71_i_k = 0;
+      int _72_impactedClausesLen_k;
+      _72_impactedClausesLen_k = (int)(_68_impactedClauses_k).Count;
+      while ((_71_i_k) < (_72_impactedClausesLen_k)) {
+        int _73_clauseIndex;
+        _73_clauseIndex = (_68_impactedClauses_k).Select(_71_i_k);
         var _arr15 = this.falseLiteralsCount;
-        _arr15[(int)((_349_clauseIndex))] = ((this.falseLiteralsCount)[(int)(_349_clauseIndex)]) + (1);
-        _347_i_k = (_347_i_k) + (1);
+        _arr15[(int)((_73_clauseIndex))] = ((this.falseLiteralsCount)[(int)(_73_clauseIndex)]) + (1);
+        _71_i_k = (_71_i_k) + (1);
       }
-      { }
-      { }
-      { }
     }
     public void addAssignment(int variable, bool @value)
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      var _arr16 = _this.traceVariable;
-      var _index2 = (_this.traceDLEnd)[(int)(_this.decisionLevel)];
+      var _arr16 = this.traceVariable;
+      var _index2 = (this.traceDLEnd)[(int)(this.decisionLevel)];
       _arr16[(int)(_index2)] = variable;
-      var _arr17 = _this.traceValue;
-      var _index3 = (_this.traceDLEnd)[(int)(_this.decisionLevel)];
+      var _arr17 = this.traceValue;
+      var _index3 = (this.traceDLEnd)[(int)(this.decisionLevel)];
       _arr17[(int)(_index3)] = @value;
-      { }
-      var _arr18 = _this.traceDLEnd;
-      var _index4 = _this.decisionLevel;
-      _arr18[(int)(_index4)] = ((_this.traceDLEnd)[(int)(_this.decisionLevel)]) + (1);
-      { }
+      var _arr18 = this.traceDLEnd;
+      var _index4 = this.decisionLevel;
+      _arr18[(int)(_index4)] = ((this.traceDLEnd)[(int)(this.decisionLevel)]) + (1);
     }
     public void increaseDecisionLevel()
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      (_this).decisionLevel = (_this.decisionLevel) + (1);
-      int _350_previous;
-      _350_previous = 0;
-      if ((_this.decisionLevel) == (0)) {
-        _350_previous = 0;
+      (this).decisionLevel = (this.decisionLevel) + (1);
+      int _74_previous;
+      _74_previous = 0;
+      if ((this.decisionLevel) == (0)) {
+        _74_previous = 0;
       } else {
-        _350_previous = (_this.traceDLEnd)[(int)((_this.decisionLevel) - (1))];
+        _74_previous = (this.traceDLEnd)[(int)((this.decisionLevel) - (1))];
       }
-      var _arr19 = _this.traceDLStart;
-      var _index5 = _this.decisionLevel;
-      _arr19[(int)(_index5)] = _350_previous;
-      var _arr20 = _this.traceDLEnd;
-      var _index6 = _this.decisionLevel;
-      _arr20[(int)(_index6)] = _350_previous;
-      { }
+      var _arr19 = this.traceDLStart;
+      var _index5 = this.decisionLevel;
+      _arr19[(int)(_index5)] = _74_previous;
+      var _arr20 = this.traceDLEnd;
+      var _index6 = this.decisionLevel;
+      _arr20[(int)(_index6)] = _74_previous;
     }
-    public void extractUnsetLiteralFromClause(int clauseIndex, out int literal)
+    public int extractUnsetLiteralFromClause(int clauseIndex)
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      literal = 0;
-      { }
-      int _351_i;
-      _351_i = 0;
-      Dafny.Sequence<int> _352_clause;
-      _352_clause = (_this.clauses).Select(clauseIndex);
-      while ((_351_i) < ((_this.clauseLength)[(int)(clauseIndex)])) {
-        if (((_this.truthAssignment)[(int)((_this).getVariableFromLiteral((_352_clause).Select(_351_i)))]) == ((0) - (1))) {
-          literal = (_352_clause).Select(_351_i);
-          return;
+      int literal = 0;
+      int _75_i;
+      _75_i = 0;
+      Dafny.ISequence<int> _76_clause;
+      _76_clause = (this.clauses).Select(clauseIndex);
+      while ((_75_i) < ((this.clauseLength)[(int)(clauseIndex)])) {
+        if (((this.truthAssignment)[(int)((this).getVariableFromLiteral((_76_clause).Select(_75_i)))]) == (-1)) {
+          literal = (_76_clause).Select(_75_i);
+          return literal;
         }
-        _351_i = (_351_i) + (1);
+        _75_i = (_75_i) + (1);
       }
-      { }
+      return literal;
     }
     public void propagate(int clauseIndex)
     {
-      { }
-      int _353_literal;
+      int _77_literal;
       int _out13;
-      (this).extractUnsetLiteralFromClause(clauseIndex, out _out13);
-      _353_literal = _out13;
-      Dafny.Sequence<int> _354_clause;
-      _354_clause = (this.clauses).Select(clauseIndex);
-      { }
-      { }
-      (this).setLiteral(_353_literal, true);
-      { }
-      { }
-      { }
-      { }
+      _out13 = (this).extractUnsetLiteralFromClause(clauseIndex);
+      _77_literal = _out13;
+      Dafny.ISequence<int> _78_clause;
+      _78_clause = (this.clauses).Select(clauseIndex);
+      (this).setLiteral(_77_literal, true);
     }
     public void unitPropagation(int variable, bool @value)
     {
-      Dafny.Sequence<int> _355_negativelyImpactedClauses;
-      _355_negativelyImpactedClauses = (this.negativeLiteralsToClauses)[(int)(variable)];
+      Dafny.ISequence<int> _79_negativelyImpactedClauses;
+      _79_negativelyImpactedClauses = (this.negativeLiteralsToClauses)[(int)(variable)];
       if (!(@value)) {
-        _355_negativelyImpactedClauses = (this.positiveLiteralsToClauses)[(int)(variable)];
+        _79_negativelyImpactedClauses = (this.positiveLiteralsToClauses)[(int)(variable)];
       }
-      int _356_k;
-      _356_k = 0;
-      int _357_negativelyImpactedClausesLen;
-      _357_negativelyImpactedClausesLen = (int)(_355_negativelyImpactedClauses).Count;
-      while ((_356_k) < (_357_negativelyImpactedClausesLen)) {
-        int _358_clauseIndex;
-        _358_clauseIndex = (_355_negativelyImpactedClauses).Select(_356_k);
-        if (((this.falseLiteralsCount)[(int)(_358_clauseIndex)]) < ((this.clauseLength)[(int)(_358_clauseIndex)])) {
-          if ((((this.trueLiteralsCount)[(int)(_358_clauseIndex)]) == (0)) && ((((this.falseLiteralsCount)[(int)(_358_clauseIndex)]) + (1)) == ((this.clauseLength)[(int)(_358_clauseIndex)]))) {
-            (this).propagate(_358_clauseIndex);
+      int _80_k;
+      _80_k = 0;
+      int _81_negativelyImpactedClausesLen;
+      _81_negativelyImpactedClausesLen = (int)(_79_negativelyImpactedClauses).Count;
+      while ((_80_k) < (_81_negativelyImpactedClausesLen)) {
+        int _82_clauseIndex;
+        _82_clauseIndex = (_79_negativelyImpactedClauses).Select(_80_k);
+        if (((this.falseLiteralsCount)[(int)(_82_clauseIndex)]) < ((this.clauseLength)[(int)(_82_clauseIndex)])) {
+          if ((((this.trueLiteralsCount)[(int)(_82_clauseIndex)]) == (0)) && ((((this.falseLiteralsCount)[(int)(_82_clauseIndex)]) + (1)) == ((this.clauseLength)[(int)(_82_clauseIndex)]))) {
+            (this).propagate(_82_clauseIndex);
           }
         }
-        _356_k = (_356_k) + (1);
+        _80_k = (_80_k) + (1);
       }
     }
     public void setLiteral(int literal, bool @value)
     {
-      { }
-      { }
-      int _359_variable;
-      _359_variable = (this).getVariableFromLiteral(literal);
-      bool _360_value_k;
-      _360_value_k = ((literal) > (0)) ? (@value) : (!(@value));
-      (this).setVariable(_359_variable, _360_value_k);
-      (this).unitPropagation(_359_variable, _360_value_k);
+      int _83_variable;
+      _83_variable = (this).getVariableFromLiteral(literal);
+      bool _84_value_k;
+      _84_value_k = (((literal) > (0)) ? (@value) : (!(@value)));
+      (this).setVariable(_83_variable, _84_value_k);
+      (this).unitPropagation(_83_variable, _84_value_k);
     }
-    public void chooseLiteral(out int x)
+    public int chooseLiteral()
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      x = 0;
-      { }
-      int _361_minim;
-      _361_minim = _0_Int32_Compile.__default.max;
-      int _362_counter;
-      _362_counter = 0;
-      int _363_result;
-      _363_result = (0) - (1);
-      bool _364_ok;
-      _364_ok = false;
-      int _365_cI;
-      _365_cI = 0;
-      while ((_365_cI) < (_this.clausesCount)) {
-        int _366_diff;
-        _366_diff = ((_this.clauseLength)[(int)(_365_cI)]) - ((_this.falseLiteralsCount)[(int)(_365_cI)]);
-        if ((((_this.trueLiteralsCount)[(int)(_365_cI)]) == (0)) && ((_366_diff) < (_361_minim))) {
-          _361_minim = _366_diff;
+      int x = 0;
+      int _85_minim;
+      _85_minim = Int32_Compile.__default.max;
+      int _86_counter;
+      _86_counter = 0;
+      int _87_result;
+      _87_result = -1;
+      bool _88_ok;
+      _88_ok = false;
+      int _89_cI;
+      _89_cI = 0;
+      while ((_89_cI) < (this.clausesCount)) {
+        int _90_diff;
+        _90_diff = ((this.clauseLength)[(int)(_89_cI)]) - ((this.falseLiteralsCount)[(int)(_89_cI)]);
+        if ((((this.trueLiteralsCount)[(int)(_89_cI)]) == (0)) && ((_90_diff) < (_85_minim))) {
+          _85_minim = _90_diff;
         }
-        if ((((_this.trueLiteralsCount)[(int)(_365_cI)]) == (0)) && ((_366_diff) == (_361_minim))) {
-          { }
-          int _367_lI;
-          _367_lI = 0;
-          while ((_367_lI) < ((_this.clauseLength)[(int)(_365_cI)])) {
-            { }
-            { }
-            int _368_variable;
-            _368_variable = (_this).getVariableFromLiteral(((_this.clauses).Select(_365_cI)).Select(_367_lI));
-            if (((_this.truthAssignment)[(int)(_368_variable)]) == ((0) - (1))) {
-              _364_ok = true;
-              if ((_362_counter) == (0)) {
-                _363_result = (_368_variable) + (1);
-                _362_counter = (_362_counter) + (1);
-              } else if ((_363_result) == ((_368_variable) + (1))) {
-                _362_counter = (_362_counter) + (1);
+        if ((((this.trueLiteralsCount)[(int)(_89_cI)]) == (0)) && ((_90_diff) == (_85_minim))) {
+          int _91_lI;
+          _91_lI = 0;
+          while ((_91_lI) < ((this.clauseLength)[(int)(_89_cI)])) {
+            int _92_variable;
+            _92_variable = (this).getVariableFromLiteral(((this.clauses).Select(_89_cI)).Select(_91_lI));
+            if (((this.truthAssignment)[(int)(_92_variable)]) == (-1)) {
+              _88_ok = true;
+              if ((_86_counter) == (0)) {
+                _87_result = (_92_variable) + (1);
+                _86_counter = (_86_counter) + (1);
+              } else if ((_87_result) == ((_92_variable) + (1))) {
+                _86_counter = (_86_counter) + (1);
               } else {
-                _362_counter = (_362_counter) - (1);
+                _86_counter = (_86_counter) - (1);
               }
             }
-            _367_lI = (_367_lI) + (1);
+            _91_lI = (_91_lI) + (1);
           }
         }
-        _365_cI = (_365_cI) + (1);
+        _89_cI = (_89_cI) + (1);
       }
-      x = (0) - (_363_result);
-      return;
+      x = (0) - (_87_result);
+      return x;
+      return x;
     }
-    public void getHasEmptyClause(out bool ok)
+    public bool getHasEmptyClause()
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      ok = false;
-      int _369_k;
-      _369_k = 0;
-      while ((_369_k) < (_this.clausesCount)) {
-        if (((_this.falseLiteralsCount)[(int)(_369_k)]) == ((_this.clauseLength)[(int)(_369_k)])) {
+      bool ok = false;
+      int _93_k;
+      _93_k = 0;
+      while ((_93_k) < (this.clausesCount)) {
+        if (((this.falseLiteralsCount)[(int)(_93_k)]) == ((this.clauseLength)[(int)(_93_k)])) {
           ok = true;
-          return;
+          return ok;
         }
-        _369_k = (_369_k) + (1);
+        _93_k = (_93_k) + (1);
       }
       ok = false;
-      return;
+      return ok;
+      return ok;
     }
-    public void getIsEmpty(out bool ok)
+    public bool getIsEmpty()
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      ok = false;
-      int _370_k;
-      _370_k = 0;
-      while ((_370_k) < (_this.clausesCount)) {
-        if (((_this.trueLiteralsCount)[(int)(_370_k)]) == (0)) {
+      bool ok = false;
+      int _94_k;
+      _94_k = 0;
+      while ((_94_k) < (this.clausesCount)) {
+        if (((this.trueLiteralsCount)[(int)(_94_k)]) == (0)) {
           ok = false;
-          return;
+          return ok;
         }
-        _370_k = (_370_k) + (1);
+        _94_k = (_94_k) + (1);
       }
       ok = true;
-      return;
+      return ok;
+      return ok;
     }
     public void level0UnitPropagation()
     {
-      var _this = this;
-    TAIL_CALL_START: ;
-      int _371_i;
-      _371_i = 0;
-      (_this).increaseDecisionLevel();
-      while ((_371_i) < (_this.clausesCount)) {
-        if ((((_this.trueLiteralsCount)[(int)(_371_i)]) == (0)) && ((((_this.falseLiteralsCount)[(int)(_371_i)]) + (1)) == ((_this.clauseLength)[(int)(_371_i)]))) {
-          (_this).propagate(_371_i);
+      int _95_i;
+      _95_i = 0;
+      (this).increaseDecisionLevel();
+      while ((_95_i) < (this.clausesCount)) {
+        if ((((this.trueLiteralsCount)[(int)(_95_i)]) == (0)) && ((((this.falseLiteralsCount)[(int)(_95_i)]) + (1)) == ((this.clauseLength)[(int)(_95_i)]))) {
+          (this).propagate(_95_i);
         }
-        _371_i = (_371_i) + (1);
+        _95_i = (_95_i) + (1);
       }
-      if (((_this.traceDLStart)[(int)(_this.decisionLevel)]) == ((_this.traceDLEnd)[(int)(_this.decisionLevel)])) {
-        (_this).revertLastDecisionLevel();
+      if (((this.traceDLStart)[(int)(this.decisionLevel)]) == ((this.traceDLEnd)[(int)(this.decisionLevel)])) {
+        (this).revertLastDecisionLevel();
       }
     }
   }
 
-
-
   public interface DataStructures {
     int variablesCount { get; set; }
-    Dafny.Sequence<Dafny.Sequence<int>> clauses { get; set; }
+    Dafny.ISequence<Dafny.ISequence<int>> clauses { get; set; }
     int clausesCount { get; set; }
     int[] clauseLength { get; set; }
     int[] truthAssignment { get; set; }
     int[] trueLiteralsCount { get; set; }
     int[] falseLiteralsCount { get; set; }
-    Dafny.Sequence<int>[] positiveLiteralsToClauses { get; set; }
-    Dafny.Sequence<int>[] negativeLiteralsToClauses { get; set; }
+    Dafny.ISequence<int>[] positiveLiteralsToClauses { get; set; }
+    Dafny.ISequence<int>[] negativeLiteralsToClauses { get; set; }
     int decisionLevel { get; set; }
     int[] traceVariable { get; set; }
     bool[] traceValue { get; set; }
     int[] traceDLStart { get; set; }
     int[] traceDLEnd { get; set; }
     int getVariableFromLiteral(int literal);
-    _System.Tuple2<int,int> convertLVtoVI(int literal, bool @value);
+    _System._ITuple2<int, int> convertLVtoVI(int literal, bool @value);
     bool isUnitClause(int index);
     bool isEmptyClause(int index);
   }
   public class _Companion_DataStructures {
+    public static int getVariableFromLiteral(DataStructures _this, int literal) {
+      return (Utils_Compile.__default.abs(literal)) - (1);
+    }
+    public static _System._ITuple2<int, int> convertLVtoVI(DataStructures _this, int literal, bool @value)
+    {
+      int _96_variable = (_this).getVariableFromLiteral(literal);
+      int _97_v = ((@value) ? (1) : (0));
+      int _98_val = (((literal) < (0)) ? ((1) - (_97_v)) : (_97_v));
+      return _System.Tuple2<int, int>.create(_96_variable, _98_val);
+    }
+    public static bool isUnitClause(DataStructures _this, int index) {
+      return (((_this.trueLiteralsCount)[(int)(index)]) == (0)) && ((((_this.clauseLength)[(int)(index)]) - ((_this.falseLiteralsCount)[(int)(index)])) == (1));
+    }
+    public static bool isEmptyClause(DataStructures _this, int index) {
+      return ((_this.clauseLength)[(int)(index)]) == ((_this.falseLiteralsCount)[(int)(index)]);
+    }
   }
-
 } // end of namespace _module
+class __CallToMain {
+  public static void Main(string[] args) {
+    Dafny.Helpers.WithHaltHandling(_module.__default._Main);
+  }
+}
