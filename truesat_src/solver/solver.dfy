@@ -45,6 +45,7 @@ class SATSolver {
     ensures result.SAT? ==> (
       var (variable, val) := formula.convertLVtoVI(literal, value);
       formula.isSatisfiableExtend(formula.truthAssignment[..][variable as int := val]));
+    ensures result.SAT? ==> formula.isSatisfiableTruthAssignment(old(formula.truthAssignment[..]), result.tau)
 
     ensures result.UNSAT? ==> (
       var (variable, val) := formula.convertLVtoVI(literal, value);
@@ -93,6 +94,7 @@ class SATSolver {
 
     ensures result.SAT? ==> formula.validValuesTruthAssignment(result.tau);
     ensures result.SAT? ==> formula.isSatisfiableExtend(formula.truthAssignment[..]);
+    ensures result.SAT? ==> formula.isSatisfiableTruthAssignment(old(formula.truthAssignment[..]), result.tau)
     ensures result.UNSAT? ==>
       !formula.isSatisfiableExtend(formula.truthAssignment[..]);
     ensures formula.countUnsetVariables(formula.truthAssignment[..]) ==
@@ -150,6 +152,7 @@ class SATSolver {
     ensures formula.valid();
     ensures result.SAT? ==> formula.validValuesTruthAssignment(result.tau);
     ensures result.SAT? ==> formula.isSatisfiableExtend(old(formula.truthAssignment[..]));
+    ensures result.SAT? ==> formula.isSatisfiableTruthAssignment(old(formula.truthAssignment[..]), result.tau)
     ensures result.UNSAT? ==>
       !formula.isSatisfiableExtend(old(formula.truthAssignment[..]));
   {
