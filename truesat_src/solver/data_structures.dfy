@@ -1242,6 +1242,17 @@ trait DataStructures {
                 && isSatisfied(tau')
   }
 
+  predicate isSatisfiableTruthAssignment(tau : seq<Int32.t>, tau':seq<Int32.t>)
+    reads `variablesCount, `clauses, `clausesCount,
+          `clauseLength, clauseLength;
+    requires validVariablesCount();
+    requires validClauses();
+    requires validValuesTruthAssignment(tau);
+  {
+    validValuesTruthAssignment(tau')
+                && isExtendingTau(tau, tau')
+                && isSatisfied(tau')
+  }
 
   function method isUnitClause(index : Int32.t) : bool
     reads this, traceVariable, traceValue, traceDLStart, 

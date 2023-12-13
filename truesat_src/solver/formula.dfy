@@ -11,7 +11,8 @@ class Formula extends DataStructures {
     requires InputPredicate.valid((variablesCount, clauses));
 
     ensures valid();
-
+    ensures this.variablesCount == variablesCount
+    ensures this.clauses == clauses
     ensures fresh(this.traceVariable) && fresh(this.traceValue) &&
       fresh(this.traceDLStart) && fresh(this.traceDLEnd) &&
       fresh(this.clauseLength) && fresh(this.trueLiteralsCount) &&
@@ -1630,8 +1631,8 @@ class Formula extends DataStructures {
     requires valid();
     requires !hasEmptyClause();
     requires isEmpty();
-
     ensures isSatisfiableExtend(truthAssignment[..]);
+    ensures isSatisfiableTruthAssignment(truthAssignment[..], truthAssignment[..])
   {
     assert forall i :: 0 <= i < |clauses| ==>
         trueLiteralsCount[i] > 0;
