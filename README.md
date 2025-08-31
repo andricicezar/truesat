@@ -1,4 +1,6 @@
-This repository contains the source code of TrueSAT, a SAT solver implementing the DPLL algorithm that is fully verified in Dafny. It also contains a C# and a C++ solver for comparison.
+This repository contains the source code of TrueSAT, a SAT solver implementing the DPLL algorithm that is fully verified in Dafny. It also contains a C# and a C++ solver for comparison. You can read more about TrueSAT in the following paper: "[A Verified Implementation of the DPLL Algorithm in Dafny](http://dx.doi.org/10.3390/math10132264)".
+
+
 
 ### Requirements
 Tested with Dafny 3.6.0.40511.
